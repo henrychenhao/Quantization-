@@ -1,14 +1,3 @@
----
-AIGC:
-  ContentProducer: '001191110102MAD55U9H0F10002'
-  ContentPropagator: '001191110102MAD55U9H0F10002'
-  Label: '1'
-  ProduceID: 'fc7d0fae-4297-4f9d-a454-8fea4e26e726'
-  PropagateID: 'fc7d0fae-4297-4f9d-a454-8fea4e26e726'
-  ReservedCode1: 'b114ea71-e90e-42a5-9ade-c4d88d0436be'
-  ReservedCode2: 'b114ea71-e90e-42a5-9ade-c4d88d0436be'
----
-
 # A股半自动量化系统
 
 本地运行的 A 股量化终端：**信号 → 人工下单 → 记账回填**。系统只负责扫描行情、生成交易信号并推送提醒，**不自动下单**，所有交易由你在券商手动完成，再回填真实成交价与数量，账本自动更新。
