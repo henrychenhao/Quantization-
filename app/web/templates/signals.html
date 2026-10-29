@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}信号中心 · 量化终端{% endblock %}
+{% block content %}
+<style>
+  .sig-card{
+    display:flex;align-items:stretch;border:1px solid var(--line);border-radius:12px;
+    overflow:hidden;margin-bottom:10px;background:var(--card);
+    transition:box-shadow .15s,border-color .15s;
+  }
+  .sig-card:hover{box-shadow:var(--shadow);border-color:#D5DCE8}
+  .sig-side{width:4px;flex:none}
+  .sig-side.buy{background:var(--up)}
+  .sig-side.sell{background:var(--down)}
+  .sig-main{flex:1;padding:14px 18px;min-width:0}
+  .sig-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .sig-title .code{font-family:var(--mono);font-weight:700;font-size:14px}
+  .sig-title .name{font-weight:600;font-size:14px}
+  .sig-params{display:flex;gap:18px;margin-top:8px;font-size:12.5px;color:var(--text-2);flex-wrap:wrap}
+  .sig-params b{font-family:var(--mono);color:var(--text);font-weight:650}
+  .sig-reason{margin-top:7px;font-size:12px;color:var(--text-3);line-height:1.6}
+  .sig-actions{display:flex;flex-direction:column;justify-content:center;gap:8px;padding:14px 16px;flex:none;border-left:1px solid var(--line-2);background:#FBFCFE}
+</style>
+
+<div class="page-head">
+  <div>
+    <h1>信号中心</h1>
+    <div class="sub">信号 → 人工下单 → 成交回填记账 · 系统不自动下单</div>
+  </div>
+  <div class="page-actions">
+    <a class="btn" href="/watchlist">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10.5H13L13 2z"/></svg>
+      去自选页扫描
+    </a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>待处理信号 <span id="pend-count" class="tag" style="margin-left:6px"></span></h2>
+    <span class="hint">在券商完成交易后，点「已成交」回填真实价格与数量</span>
+  </div>
+  <div id="pending"></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>历史信号</h2>
+    <span class="hint">全部信号流水</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <colgroup>
+        <col style="width:138px"><col><col style="width:74px"><col style="width:132px">
+        <col><col style="width:140px"><col style="width:82px">
+      </colgroup>
+      <thead><tr>
+        <th style="text-align:left">时间</th><th style="text-align:left">标的</th><th style="text-align:center">方向</th><th style="text-align:left">策略</th>
+        <th style="text-align:left">触发逻辑</th><th>建议</th><th style="text-align:center">状态</th>
+      </tr></thead>
+      <tbody id="hist-tbody"></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const STATUS_TXT = { pending: "待处理", followed: "已跟随", ignored: "已忽略" };
+const SNAME = {{ strategies|tojson }};
+const sname = c => (SNAME.find(s => s.code === c) || {}).name || c;
+
+function load() {
+  api("/api/signals").then(d => {
+    // 后端字段为 ref_price / suggest_shares，统一映射成 price / shares 供渲染与记账弹窗使用
+    const items = d.items.map(s => ({ ...s, price: s.ref_price, shares: s.suggest_shares }));
+    const pend = items.filter(s => s.status === "pending");
+    document.getElementById("pend-count").textContent = pend.length;
+
+    document.getElementById("pending").innerHTML = pend.length
+      ? pend.map(s => {
+          const sideCls = s.side === "buy" ? "buy" : "sell";
+          const sideTxt = s.side === "buy" ? "拟买入" : "拟卖出";
+          const amount = s.price * s.shares;
+          return `<div class="sig-card">
+            <div class="sig-side ${sideCls}"></div>
+            <div class="sig-main">
+              <div class="sig-title">
+                <span class="badge ${sideCls}">${sideTxt}</span>
+                <span class="code">${s.code}</span>
+                <span class="name">${s.name}</span>
+              </div>
+              <div class="sig-params">
+                <span>建议 <b>${s.shares}</b> 股（${Math.floor(s.shares / 100)} 手）</span>
+                <span>参考价 <b>${s.price}</b></span>
+                <span>预计金额 <b>${fmtMoney(amount)}</b></span>
+                <span>策略 <b>${sname(s.strategy)}</b></span>
+              </div>
+              <div class="sig-reason">${s.created_at} · ${s.reason || ""}</div>
+            </div>
+            <div class="sig-actions">
+              <button class="btn primary sm" onclick='follow(${s.id}, ${JSON.stringify(s).replace(/'/g, "&#39;")})'>已成交，记账</button>
+              <button class="btn ghost sm" onclick="ignore(${s.id})">忽略</button>
+            </div>
+          </div>`;
+        }).join("")
+      : `<div class="empty">
+          <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10.5H13L13 2z"/></svg></div>
+          <div class="t">暂无待处理信号</div>
+          <div class="d">去「自选监控」页点击「运行信号扫描」<br>每个交易日 14:50 调度器也会自动扫描</div>
+          <div style="margin-top:14px"><a class="btn primary" href="/watchlist">去自选监控扫描</a></div>
+        </div>`;
+
+    document.getElementById("hist-tbody").innerHTML = items.map(s => `<tr>
+      <td class="muted" style="font-family:var(--mono);font-size:11.5px;text-align:left">${s.created_at}</td>
+      <td style="text-align:left"><span class="wl-code" style="font-family:var(--mono);font-weight:600">${s.code}</span> <span class="muted">${s.name || ""}</span></td>
+      <td style="text-align:center"><span class="badge ${s.side === "buy" ? "buy" : "sell"}">${s.side === "buy" ? "买入" : "卖出"}</span></td>
+      <td class="num" title="${s.strategy}" style="text-align:left">${sname(s.strategy)}</td>
+      <td style="text-align:left;white-space:normal" class="muted">${s.reason || "—"}</td>
+      <td class="num">${s.shares}股 @ ${s.price}</td>
+      <td style="text-align:center"><span class="badge ${s.status}">${STATUS_TXT[s.status] || s.status}</span></td>
+    </tr>`).join("") || `<tr><td colspan="7"><div class="empty" style="border:none;padding:24px"><div class="t">暂无历史信号</div><div class="d">待处理信号在「已成交，记账」或「忽略」后<br>会自动归档到这里</div></div></td></tr>`;
+  }).catch(e => toast(e.message, "err"));
+}
+
+/* 已成交记账（Modal，预填建议值与费用估算） */
+function follow(id, sig) {
+  const suggestFee = Math.max(sig.price * sig.shares * 0.00025, 5).toFixed(2);
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">成交回填 · ${sig.code} <span class="badge ${sig.side === "buy" ? "buy" : "sell"}" style="margin-left:6px">${sig.side === "buy" ? "买入" : "卖出"}</span>
+        <div class="sub">按券商实际成交填写，保存后自动更新持仓与现金</div>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>实际成交价（元）</label><input class="input" id="f-price" type="number" step="0.001" value="${sig.price}"></div>
+        <div class="field"><label>实际成交数量（股）</label><input class="input" id="f-shares" type="number" step="100" value="${sig.shares}"></div>
+        <div class="field"><label>费用（佣金+税费，元）</label><input class="input" id="f-fee" type="number" step="0.01" value="${suggestFee}"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn primary" id="f-submit">确认记账</button>
+      </div>
+    </div>`, () => {
+      document.getElementById("f-submit").addEventListener("click", async () => {
+        const price = parseFloat(document.getElementById("f-price").value);
+        const shares = parseInt(document.getElementById("f-shares").value);
+        const fee = parseFloat(document.getElementById("f-fee").value) || 0;
+        if (!(price > 0) || !(shares > 0)) { toast("价格与数量必须大于 0", "err"); return; }
+        try {
+          const d = await api(`/api/signals/${id}/follow`, "POST", { price, shares, fee });
+          closeModal();
+          toast(`已记账：${d.code} ${d.side === "buy" ? "买入" : "卖出"} ${d.shares} 股 @ ${d.price}`);
+          load();
+        } catch (e) { toast(e.message, "err"); }
+      });
+    });
+}
+
+async function ignore(id) {
+  if (!confirm("忽略该信号？")) return;
+  try { await api(`/api/signals/${id}/ignore`, "POST"); toast("已忽略"); load(); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+load();
+</script>
+{% endblock %}

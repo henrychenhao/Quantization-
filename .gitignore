@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 运行时数据（账本、行情缓存、交易日历——含用户私有数据，不入库）
+data/
+
+# 运行时日志与临时文件
+logs/
+.temp/
+
+# 配置（含 API Key 等敏感信息；模板见 config.example.yaml）
+config.yaml
+
+# 系统
+.DS_Store
+*.swp

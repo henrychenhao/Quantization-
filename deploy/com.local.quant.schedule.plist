@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 量化定时调度常驻（交易日 09:35 心跳 / 14:50 尾盘信号 / 17:30 数据同步）。
+     安装：cp deploy/com.local.quant.schedule.plist ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.local.quant.schedule.plist
+     卸载：launchctl bootout gui/$(id -u)/com.local.quant.schedule
+     日志：logs/schedule.log、logs/schedule.err.log -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.local.quant.schedule</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/henry_katherine/henry/Quantization‌/.venv/bin/python</string>
+    <string>-u</string>
+    <string>/Users/henry_katherine/henry/Quantization‌/main.py</string>
+    <string>schedule</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/henry_katherine/henry/Quantization‌</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/henry_katherine/henry/Quantization‌/logs/schedule.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/henry_katherine/henry/Quantization‌/logs/schedule.err.log</string>
+</dict>
+</plist>

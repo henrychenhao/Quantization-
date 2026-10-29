@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}账户账本 · 量化终端{% endblock %}
+{% block content %}
+<script src="/static/echarts.min.js"></script>
+<div class="page-head">
+  <div>
+    <h1>账户账本</h1>
+    <div class="sub">成交流水是唯一事实源 · 持仓与现金由流水推导 · 人工调仓请走信号记账入口</div>
+  </div>
+</div>
+
+<div class="stats">
+  <div class="stat">
+    <div class="label">总资产</div>
+    <div class="value" style="color:var(--brand)">¥{{ "{:,}".format(total|round|int) }}</div>
+    <div class="sub">初始资金 ¥{{ "{:,}".format(init_cash|round|int) }}</div>
+  </div>
+  <div class="stat">
+    <div class="label">累计收益</div>
+    <div class="value {{ 'pos' if pnl >= 0 else 'neg' }}">{{ "{:+,.0f}".format(pnl) }}<span style="font-size:13px;font-weight:600;margin-left:6px">{{ "%+.2f%%"|format(pnl_pct * 100) }}</span></div>
+    <div class="sub">已实现 + 浮动盈亏</div>
+  </div>
+  <div class="stat">
+    <div class="label">可用现金</div>
+    <div class="value">¥{{ "{:,}".format(cash|round|int) }}</div>
+    <div class="sub">可用于买入信号</div>
+  </div>
+  <div class="stat">
+    <div class="label">持仓市值</div>
+    <div class="value">¥{{ "{:,}".format(market_value|round|int) }}</div>
+    <div class="sub">{{ positions|length }} 个持仓标的</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>资产走势</h2>
+    <span class="hint">每日心跳任务生成资产快照 · 最近 90 日</span>
+  </div>
+  <div id="assetChart" style="height:260px"></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>当前持仓</h2>
+    <span class="hint">最新价取本地 K 线收盘 · 浮盈按持仓成本计算</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th style="text-align:left">代码</th><th style="text-align:left">名称</th><th>持仓(股)</th><th>持仓成本</th><th>最新价</th>
+        <th>市值</th><th>浮动盈亏</th>
+      </tr></thead>
+      <tbody>
+        {% for p in positions %}
+        {% set pnl = (p.last_price / p.avg_cost - 1) if p.avg_cost else 0 %}
+        <tr>
+          <td><span style="font-family:var(--mono);font-weight:600">{{ p.code }}</span></td>
+          <td class="muted" style="text-align:left">{{ p.name or "—" }}</td>
+          <td class="num">{{ p.shares }}</td>
+          <td class="num">{{ "%.4f"|format(p.avg_cost) }}</td>
+          <td class="num">{{ "%.3f"|format(p.last_price) }}</td>
+          <td class="num">¥{{ "{:,}".format(p.market_value|round|int) }}</td>
+          <td class="num {{ 'pos' if pnl >= 0 else 'neg' }}"><strong>{{ "%+.2f%%"|format(pnl * 100) }}</strong></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7">
+          <div class="empty" style="border:none;padding:26px">
+            <div class="t">暂无持仓</div>
+            <div class="d">在「信号中心」对买入信号点「已成交」记账后，持仓会出现在这里</div>
+          </div>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>成交流水</h2>
+    <span class="hint">账本唯一事实源 · 共 {{ trades|length }} 笔</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th style="text-align:left">时间</th><th style="text-align:left">标的</th><th style="text-align:center">方向</th>
+        <th>价格</th><th>数量</th><th>费用</th><th style="text-align:left">备注</th><th style="text-align:right">操作</th>
+      </tr></thead>
+      <tbody>
+        {% for t in trades %}
+        <tr>
+          <td class="muted" style="font-family:var(--mono);font-size:11.5px;text-align:left">{{ t.traded_at }}</td>
+          <td style="text-align:left"><span style="font-family:var(--mono);font-weight:600">{{ t.code }}</span></td>
+          <td style="text-align:center"><span class="badge {{ 'buy' if t.side == 'buy' else 'sell' }}">{{ "买入" if t.side == "buy" else "卖出" }}</span></td>
+          <td class="num">{{ t.price }}</td>
+          <td class="num">{{ t.shares }}</td>
+          <td class="num">{{ "%.2f"|format(t.fee) }}</td>
+          <td class="muted" style="text-align:left">{{ t.note or "—" }}</td>
+          <td style="text-align:right">
+            <button class="btn ghost sm" onclick='editTrade({{ {"id": t.id, "price": t.price, "shares": t.shares, "fee": t.fee, "note": t.note or "", "code": t.code, "side": t.side} | tojson }})'>修改</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="8"><div class="empty" style="border:none;padding:24px"><div class="d">暂无成交记录</div></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>资产快照</h2>
+    <span class="hint">每交易日心跳任务自动生成 · 近 30 日</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="text-align:left">日期</th><th>现金</th><th>持仓市值</th><th>总资产</th></tr></thead>
+      <tbody>
+        {% for s in snapshots %}
+        <tr>
+          <td style="font-family:var(--mono)">{{ s.snap_date }}</td>
+          <td class="num">¥{{ "{:,}".format(s.cash|round|int) }}</td>
+          <td class="num">¥{{ "{:,}".format(s.market_value|round|int) }}</td>
+          <td class="num"><strong>¥{{ "{:,}".format(s.total|round|int) }}</strong></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4"><div class="empty" style="border:none;padding:24px"><div class="d">暂无快照 — 调度器心跳任务会在交易日 09:35 生成</div></div></td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* 账本纠错：修改一笔流水（价格/数量/费用/备注），保存后全量重推现金与持仓 */
+function editTrade(t) {
+  const sideTxt = t.side === "buy" ? "买入" : "卖出";
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">修改流水 · ${t.code} <span class="badge ${t.side === "buy" ? "buy" : "sell"}" style="margin-left:6px">${sideTxt}</span>
+        <div class="sub">按实际成交更正，保存后现金与持仓按全部流水重算</div>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>成交价（元）</label><input class="input" id="e-price" type="number" step="0.001" value="${t.price}"></div>
+        <div class="field"><label>成交数量（股）</label><input class="input" id="e-shares" type="number" step="100" value="${t.shares}"></div>
+        <div class="field"><label>费用（佣金+税费，元）</label><input class="input" id="e-fee" type="number" step="0.01" value="${t.fee}"></div>
+        <div class="field"><label>备注（可选）</label><input class="input" id="e-note" value="${(t.note || "").replace(/"/g, "&quot;")}"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn primary" id="e-submit">保存修改</button>
+      </div>
+    </div>`, () => {
+      document.getElementById("e-submit").addEventListener("click", async () => {
+        const price = parseFloat(document.getElementById("e-price").value);
+        const shares = parseInt(document.getElementById("e-shares").value);
+        const fee = parseFloat(document.getElementById("e-fee").value) || 0;
+        const note = document.getElementById("e-note").value.trim();
+        if (!(price > 0) || !(shares > 0)) { toast("价格与数量必须大于 0", "err"); return; }
+        try {
+          await api(`/api/trades/${t.id}`, "PUT", { price, shares, fee, note: note || null });
+          closeModal();
+          toast("流水已修正，持仓与现金已重算");
+          location.reload();
+        } catch (e) { toast(e.message, "err"); }
+      });
+    });
+}
+
+/* 资产走势（最近 90 日快照） */
+(function () {
+  const SNAP = {{ snapshots|tojson }};
+  if (!SNAP || !SNAP.length) return;
+  const chart = echarts.init(document.getElementById("assetChart"));
+  chart.setOption({
+    grid: { left: 52, right: 16, top: 24, bottom: 30 },
+    tooltip: { trigger: "axis", backgroundColor: "#0B1220", borderWidth: 0,
+               textStyle: { color: "#E8EDF6", fontSize: 12 },
+               valueFormatter: v => "¥" + Number(v).toLocaleString("zh-CN") },
+    xAxis: { type: "category", data: SNAP.map(s => s.date),
+             axisLine: { lineStyle: { color: "#D5DCE8" } },
+             axisLabel: { color: "#8A93A6", fontSize: 11 } },
+    yAxis: { type: "value", scale: true,
+             axisLabel: { color: "#8A93A6", fontSize: 11, formatter: v => (v / 10000).toFixed(1) + "万" },
+             splitLine: { lineStyle: { color: "#EEF1F7" } } },
+    series: [{
+      name: "总资产", type: "line", smooth: true, symbol: "none",
+      data: SNAP.map(s => s.total),
+      lineStyle: { width: 2, color: "#2F6BFF" },
+      areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+        colorStops: [{ offset: 0, color: "rgba(47,107,255,.22)" },
+                      { offset: 1, color: "rgba(47,107,255,.02)" }] } },
+      itemStyle: { color: "#2F6BFF" },
+    }],
+  });
+  window.addEventListener("resize", () => chart.resize());
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block title %}回测工作台 · 量化终端{% endblock %}
+{% block content %}
+<script src="/static/echarts.min.js"></script>
+<style>
+  .bt-config{display:grid;grid-template-columns:280px auto 170px 1fr;gap:18px;align-items:end}
+  .bt-strategies{margin-top:18px;padding-top:16px;border-top:1px solid var(--line-2)}
+  .chart{width:100%;height:320px}
+  .chart + .chart{margin-top:4px}
+  .result-fade{animation:riseIn .25s ease}
+  @keyframes riseIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .legend-note{font-size:11.5px;color:var(--text-3)}
+  #result tbody tr{cursor:pointer}
+  #result tbody tr:hover{background:#F6F8FC}
+  #result tbody tr.sel{background:var(--brand-soft)}
+  #result tbody tr.sel td:first-child strong{color:var(--brand-dark)}
+</style>
+
+<div class="page-head">
+  <div>
+    <h1>回测工作台</h1>
+    <div class="sub">多策略同区间对比 · 基准为买入持有 · 收盘价撮合，含佣金印花税与滑点</div>
+  </div>
+  <div class="page-actions">
+    <button class="btn" id="reset-btn">恢复默认</button>
+    <button class="btn primary" id="run">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z"/></svg>
+      运行回测
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="bt-config">
+    <div class="field">
+      <label>标的</label>
+      <select class="input" id="code">
+        {% for w in watchlist %}
+        <option value="{{ w.code }}">{{ w.code }} · {{ w.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label>回测区间</label>
+      <div class="seg" id="ranges">
+        <button data-key="3m">近3月</button>
+        <button data-key="6m">近半年</button>
+        <button data-key="1y" class="active">近1年</button>
+        <button data-key="3y">近3年</button>
+        <button data-key="all">全区间</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>初始资金</label>
+      <div class="input-group">
+        <input class="input" type="number" id="capital" value="100000" step="10000" min="10000">
+        <span class="unit">元</span>
+      </div>
+    </div>
+  </div>
+  <div class="bt-strategies">
+    <div class="field">
+      <label>策略（多选，同区间同资金横向对比）</label>
+      <div class="chips" id="strategies">
+        {% for s in strategies %}
+        <label class="chip checked" data-code="{{ s.code }}">
+          <input type="checkbox" value="{{ s.code }}" checked>
+          <span class="tick"></span>{{ s.name }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="placeholder">
+  <div class="card" style="padding:0;border:none;box-shadow:none;background:transparent">
+    <div class="empty">
+      <div class="icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
+      </div>
+      <div class="t">还没有回测结果</div>
+      <div class="d">选择标的与策略，点击右上角「运行回测」<br>将生成绩效指标、策略对比表与净值/回撤曲线</div>
+      <div style="margin-top:14px"><button class="btn primary" onclick="document.getElementById('run').click()">运行回测</button></div>
+    </div>
+  </div>
+</div>
+
+<div id="result" class="hidden"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const RANGE_KEYS = { "3m": 90, "6m": 182, "1y": 365, "3y": 1095 };
+let setRange = "1y";
+
+function rangeDates(key) {
+  const end = new Date();
+  const days = RANGE_KEYS[key];
+  if (!days) return { start: null, end: null };
+  const start = new Date(end.getTime() - days * 86400000);
+  const f = d => d.toISOString().slice(0, 10);
+  return { start: f(start), end: f(end) };
+}
+
+function run() {
+  const code = document.getElementById("code").value;
+  const capital = parseFloat(document.getElementById("capital").value) || 100000;
+  const strategies = [...document.querySelectorAll("#strategies input:checked")].map(i => i.value);
+  if (!strategies.length) { toast("至少选择一个策略", "err"); return; }
+  const { start, end } = rangeDates(setRange);
+
+  const btn = document.getElementById("run");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 回测中…';
+
+  api("/api/backtest", "POST", { code, strategies, start, end, capital })
+    .then(d => render(d, capital, code))
+    .catch(e => toast(e.message, "err"))
+    .finally(() => {
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z"/></svg> 运行回测';
+    });
+}
+
+function render(d, capital, code) {
+  const best = d.rows.reduce((a, b) => (a && a.total_return >= b.total_return ? a : b), null);
+  const bench = d.benchmark.length ? (d.benchmark[d.benchmark.length - 1] / capital - 1) : 0;
+
+  const stats = `
+    <div class="stats">
+      <div class="stat">
+        <div class="label">回测区间</div>
+        <div class="value" style="font-size:15px;letter-spacing:-.3px">${d.kline.start} → ${d.kline.end}</div>
+        <div class="sub">${d.kline.days} 个交易日 · ${code}</div>
+      </div>
+      <div class="stat">
+        <div class="label">参与策略</div>
+        <div class="value">${d.rows.length}</div>
+        <div class="sub">初始资金 ${fmtMoney(capital)}</div>
+      </div>
+      <div class="stat">
+        <div class="label">最强策略</div>
+        <div class="value ${best && best.total_return >= 0 ? 'pos' : 'neg'}" style="font-size:19px">${best ? fmtPct(best.total_return) : '—'}</div>
+        <div class="sub">${best ? best.name : '—'}</div>
+      </div>
+      <div class="stat">
+        <div class="label">买入持有基准</div>
+        <div class="value ${bench >= 0 ? 'pos' : 'neg'}">${fmtPct(bench)}</div>
+        <div class="sub">同期持有不动收益</div>
+      </div>
+    </div>`;
+
+  const rows = d.rows.map((r, i) => `<tr data-idx="${i}" ${i === 0 ? 'class="sel"' : ""}>
+      <td><strong>${r.name}</strong><span class="muted" style="font-family:var(--mono);font-size:11px;margin-left:8px">${r.code}</span></td>
+      <td class="num ${r.total_return >= 0 ? 'pos' : 'neg'}"><strong>${fmtPct(r.total_return)}</strong></td>
+      <td class="num">${fmtPct(r.annual_return)}</td>
+      <td class="num ${r.excess_return >= 0 ? 'pos' : 'neg'}">${fmtPct(r.excess_return)}</td>
+      <td class="num neg">${fmtPct(r.max_drawdown, false)}</td>
+      <td class="num">${fmtNum(r.sharpe)}</td>
+      <td class="num">${(r.win_rate * 100).toFixed(0)}%<span class="muted" style="font-size:11px"> · ${r.rounds}回合</span></td>
+      <td class="num">${r.n_trades}</td>
+      <td class="num">${fmtMoney(r.final_asset)}</td>
+    </tr>`).join("");
+
+  document.getElementById("result").innerHTML = `
+    <div class="result-fade">
+    ${stats}
+    <div class="card">
+      <div class="card-head">
+        <h2>策略对比</h2>
+        <span class="hint">同区间、同初始资金 · 红涨绿跌 · 点击策略行可在净值图上标记买卖点</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>策略</th><th>总收益</th><th>年化</th><th>超额(vs持有)</th><th>最大回撤</th>
+            <th>夏普</th><th>胜率</th><th>交易笔数</th><th>期末资产</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h2>累计净值对比</h2>
+        <span class="hint">策略 vs 买入持有基准（虚线）· 红色标记 = 买入，绿色标记 = 卖出</span>
+      </div>
+      <div id="equityChart" class="chart"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h2>回撤对比</h2>
+        <span class="hint">最大回撤越浅越好</span>
+      </div>
+      <div id="ddChart" class="chart"></div>
+    </div>
+    </div>`;
+
+  document.getElementById("placeholder").classList.add("hidden");
+  const resultEl = document.getElementById("result");
+  resultEl.classList.remove("hidden");
+
+  const PALETTE = ["#2F6BFF", "#00B39B", "#E08A00", "#8B5CF6", "#E5484D", "#0EA5E9"];
+  const axisCommon = {
+    axisLine: { lineStyle: { color: "#D5DCE8" } },
+    axisLabel: { color: "#8A93A6", fontSize: 11 },
+    splitLine: { lineStyle: { color: "#EEF1F7" } },
+  };
+
+  const eqChart = echarts.init(document.getElementById("equityChart"));
+  let selIdx = 0;
+
+  /* 选中策略的买卖点标记：红色 B = 买入，绿色 S = 卖出（锚在净值曲线上） */
+  function markTrades(trades, code) {
+    const pos = {};
+    d.dates.forEach((dt, i) => { pos[dt] = i; });
+    return (trades || []).map(t => {
+      const xi = pos[t.date];
+      if (xi === undefined) return null;
+      const buy = t.side === "buy";
+      return {
+        coord: [t.date, d.curves[code][xi]],
+        value: buy ? "B" : "S",
+        symbol: "pin",
+        symbolSize: 32,
+        itemStyle: { color: buy ? "#E5484D" : "#0FA47F", borderWidth: 0 },
+        label: { show: true, color: "#fff", fontSize: 11, fontWeight: 700 },
+        tooltip: {
+          formatter: p => `<b>${buy ? "买入" : "卖出"}</b> ${t.shares} 股 @ ${t.price}<br>${t.date}`,
+        },
+      };
+    }).filter(Boolean);
+  }
+
+  function buildSeries(sel) {
+    return d.rows.map((r, i) => ({
+      name: r.name, type: "line", showSymbol: false, smooth: true,
+      data: d.curves[r.code],
+      lineStyle: { width: 1.8, color: PALETTE[i % PALETTE.length] },
+      itemStyle: { color: PALETTE[i % PALETTE.length] },
+      markPoint: { data: sel === i ? markTrades(r.trades, r.code) : [], symbolSize: 32 },
+    }));
+  }
+
+  function buildEqOption(sel) {
+    const series = buildSeries(sel);
+    series.push({
+      name: "买入持有", type: "line", showSymbol: false, smooth: true, data: d.benchmark,
+      lineStyle: { width: 1.4, type: "dashed", color: "#94A3B8" }, itemStyle: { color: "#94A3B8" },
+    });
+    return {
+      tooltip: { trigger: "axis", backgroundColor: "#0B1220", borderWidth: 0, textStyle: { color: "#E8EDF6", fontSize: 12 } },
+      legend: { bottom: 0, icon: "roundRect", itemWidth: 12, itemHeight: 3, textStyle: { color: "#5B6478", fontSize: 12 } },
+      grid: { left: 58, right: 18, top: 14, bottom: 44 },
+      xAxis: { type: "category", data: d.dates, boundaryGap: false, ...axisCommon },
+      yAxis: { type: "value", scale: true, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: v => (v / 10000).toFixed(1) + "万" } },
+      series,
+    };
+  }
+
+  eqChart.setOption(buildEqOption(0));
+
+  function selectRow(i) {
+    selIdx = i;
+    document.querySelectorAll("#result tr[data-idx]").forEach((r, j) => r.classList.toggle("sel", j === i));
+    eqChart.setOption(buildEqOption(i));
+  }
+  resultEl.addEventListener("click", e => {
+    const tr = e.target.closest("tr[data-idx]");
+    if (tr) selectRow(parseInt(tr.dataset.idx, 10));
+  });
+
+  const ddChart = echarts.init(document.getElementById("ddChart"));
+  ddChart.setOption({
+    tooltip: { trigger: "axis", valueFormatter: v => v + "%", backgroundColor: "#0B1220", borderWidth: 0, textStyle: { color: "#E8EDF6", fontSize: 12 } },
+    legend: { bottom: 0, icon: "roundRect", itemWidth: 12, itemHeight: 3, textStyle: { color: "#5B6478", fontSize: 12 } },
+    grid: { left: 52, right: 18, top: 14, bottom: 44 },
+    xAxis: { type: "category", data: d.dates, boundaryGap: false, ...axisCommon },
+    yAxis: { type: "value", max: 0, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: v => v + "%" } },
+    series: d.rows.map((r, i) => ({
+      name: r.name, type: "line", showSymbol: false, smooth: true, data: d.drawdown[r.code],
+      lineStyle: { width: 1.8, color: PALETTE[i % PALETTE.length] },
+      itemStyle: { color: PALETTE[i % PALETTE.length] },
+    })),
+  });
+
+  window.addEventListener("resize", () => { eqChart.resize(); ddChart.resize(); }, { once: true });
+  resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+document.getElementById("run").addEventListener("click", run);
+document.getElementById("reset-btn").addEventListener("click", () => {
+  document.getElementById("capital").value = 100000;
+  document.querySelectorAll("#ranges button").forEach(b => b.classList.toggle("active", b.dataset.key === "1y"));
+  setRange = "1y";
+  document.querySelectorAll("#strategies .chip").forEach(c => {
+    c.classList.add("checked");
+    c.querySelector("input").checked = true;
+  });
+  document.getElementById("result").classList.add("hidden");
+  document.getElementById("placeholder").classList.remove("hidden");
+});
+document.querySelectorAll("#ranges button").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#ranges button").forEach(x => x.classList.remove("active"));
+    b.classList.add("active"); setRange = b.dataset.key;
+  });
+});
+document.querySelectorAll("#strategies .chip").forEach(l => {
+  l.addEventListener("click", e => {
+    e.preventDefault();
+    const cb = l.querySelector("input");
+    cb.checked = !cb.checked;
+    l.classList.toggle("checked", cb.checked);
+  });
+});
+</script>
+{% endblock %}

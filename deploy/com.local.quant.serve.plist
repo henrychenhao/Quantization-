@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 量化 Web 控制台常驻（127.0.0.1:8000）。可选安装，开发期建议手动 main.py serve。
+     安装：cp deploy/com.local.quant.serve.plist ~/Library/LaunchAgents/
+           launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.local.quant.serve.plist
+     卸载：launchctl bootout gui/$(id -u)/com.local.quant.serve -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.local.quant.serve</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/henry_katherine/henry/Quantization‌/.venv/bin/python</string>
+    <string>/Users/henry_katherine/henry/Quantization‌/main.py</string>
+    <string>serve</string>
+    <string>--port</string>
+    <string>8000</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/henry_katherine/henry/Quantization‌</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/henry_katherine/henry/Quantization‌/logs/serve.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/henry_katherine/henry/Quantization‌/logs/serve.err.log</string>
+</dict>
+</plist>

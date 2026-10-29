@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% block title %}自选监控 · 量化终端{% endblock %}
+{% block content %}
+<style>
+  .wl-code{font-family:var(--mono);font-weight:600;font-size:12.5px}
+  .wl-name{color:var(--text-2);font-size:12.5px}
+  .tag-row{display:flex;flex-wrap:wrap;gap:5px;max-width:280px}
+  .rec-reason{
+    background:linear-gradient(90deg,#F0FAF6 0%,#F7FCFA 100%);
+    border:1px solid #CBEADF;border-left:3px solid var(--cyan);
+    border-radius:10px;padding:12px 15px;font-size:13px;line-height:1.7;color:#134E40;
+    margin-bottom:14px;
+  }
+</style>
+
+<div class="page-head">
+  <div>
+    <h1>自选监控</h1>
+    <div class="sub">自选即量化监控范围 · 持仓标的强制保留 · 每个标的可绑定多个策略</div>
+  </div>
+  <div class="page-actions">
+    <button class="btn" id="add-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      添加自选
+    </button>
+    <button class="btn primary" id="run-signals-btn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10.5H13L13 2z"/></svg>
+      运行信号扫描
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>监控列表</h2>
+    <span class="hint" id="run-result">扫描结果会显示在这里</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>代码</th><th style="text-align:left">名称</th><th style="text-align:left">现价</th><th style="text-align:left">涨跌</th><th style="text-align:center">量化</th><th style="text-align:left">绑定策略</th>
+        <th>持仓(股)</th><th style="text-align:right">操作</th>
+      </tr></thead>
+      <tbody id="watch-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card hidden" id="rec-card">
+  <div class="card-head">
+    <h2>策略推荐 · <span id="rec-code" style="font-family:var(--mono)"></span></h2>
+    <span class="hint">近3月/半年/1年/3年/全区间多窗口回测 · 样本内结果仅供参考</span>
+  </div>
+  <div class="rec-reason" id="rec-reason"></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>策略</th><th>得分</th><th>近3月</th><th>近半年</th><th>近1年</th>
+        <th>近3年</th><th>全区间</th><th>近1年回撤</th><th>全区间胜率</th>
+      </tr></thead>
+      <tbody id="rec-tbody"></tbody>
+    </table>
+  </div>
+  <div style="display:flex;gap:9px;margin-top:16px">
+    <button class="btn primary" id="apply-rec">应用推荐策略（覆盖当前配置）</button>
+    <button class="btn ghost" onclick="document.getElementById('rec-card').classList.add('hidden')">收起</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let recCtx = { wid: null, combo: [] };
+
+function loadWatchlist() {
+  api("/api/watchlist").then(d => {
+    document.getElementById("watch-tbody").innerHTML = d.items.map(w => `<tr>
+      <td><span class="wl-code">${w.code}</span></td>
+      <td style="text-align:left"><span class="wl-name">${w.name || "—"}</span></td>
+      <td class="num" data-q="${w.code}" style="text-align:left;font-family:var(--mono)">—</td>
+      <td data-qp="${w.code}" style="text-align:left">—</td>
+      <td style="text-align:center">
+        <label class="switch">
+          <input type="checkbox" ${w.quant_enabled ? "checked" : ""} onchange="toggle(${w.id})">
+          <span class="track"></span><span class="knob"></span>
+        </label>
+      </td>
+      <td style="text-align:left;white-space:normal"><div class="tag-row">${(w.strategies || []).map(s => `<span class="tag blue" title="${s}">${sname(s)}</span>`).join("") || '<span class="muted">未绑定</span>'}</div></td>
+      <td class="num">${w.shares || "—"}</td>
+      <td style="text-align:right">
+        <button class="btn ghost sm" onclick='editStrategies(${w.id}, ${JSON.stringify(w.strategies || []).replace(/'/g, "&#39;")})'>策略</button>
+        <button class="btn brand-ghost sm" onclick="rec(${w.id}, '${w.code}')">推荐</button>
+        <button class="btn danger sm" onclick="del(${w.id})">移除</button>
+      </td>
+    </tr>`).join("") || `<tr><td colspan="8"><div class="empty" style="border:none;padding:28px"><div class="t">暂无自选标的</div><div class="d">点击右上角「添加自选」开始</div></div></td></tr>`;
+    refreshQuotes();
+  }).catch(e => toast(e.message, "err"));
+}
+
+/* 实时行情轮询（15 秒）：只更新“现价/涨跌”两列，不重载整表 */
+async function refreshQuotes() {
+  try {
+    const d = await api("/api/watchlist/quotes");
+    for (const q of d.items) {
+      const el = document.querySelector(`[data-q="${q.code}"]`);
+      if (el) {
+        const price = Number(q.price);
+        el.textContent = price < 10 ? price.toFixed(3) : price.toFixed(2);
+        const p = document.querySelector(`[data-qp="${q.code}"]`);
+        if (p) {
+          const up = q.change_pct >= 0;
+          p.className = up ? "pos" : "neg";
+          p.style.textAlign = "left";
+          p.textContent = (up ? "+" : "") + q.change_pct.toFixed(2) + "%";
+        }
+      }
+    }
+  } catch (e) { /* 行情接口失败静默，保留旧值 */ }
+}
+
+setInterval(refreshQuotes, 15000);
+
+async function toggle(id) {
+  try { await api(`/api/watchlist/${id}/toggle`, "POST"); loadWatchlist(); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+/* 编辑绑定策略：弹窗勾选策略，保存即覆盖当前绑定 */
+function editStrategies(wid, current) {
+  const chips = STRATEGIES.map(s => `
+    <label class="chip ${(current || []).includes(s.code) ? "checked" : ""}" data-code="${s.code}">
+      <input type="checkbox" value="${s.code}" ${(current || []).includes(s.code) ? "checked" : ""}><span class="tick"></span>${s.name}
+    </label>`).join("");
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">编辑绑定策略
+        <div class="sub">勾选要监控的策略，保存后即时生效</div>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>绑定策略（可多选）</label><div class="chips" id="es-strategies">${chips}</div></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn primary" id="es-submit">保存</button>
+      </div>
+    </div>`, () => {
+      document.querySelectorAll("#es-strategies .chip").forEach(l => {
+        l.addEventListener("click", e => {
+          e.preventDefault();
+          const cb = l.querySelector("input");
+          cb.checked = !cb.checked;
+          l.classList.toggle("checked", cb.checked);
+        });
+      });
+      document.getElementById("es-submit").addEventListener("click", async () => {
+        const strategies = [...document.querySelectorAll("#es-strategies input:checked")].map(i => i.value);
+        if (!strategies.length) { toast("至少绑定一个策略", "err"); return; }
+        try {
+          await api(`/api/watchlist/${wid}/strategies`, "POST", { strategies });
+          closeModal();
+          toast("已更新绑定策略");
+          loadWatchlist();
+        } catch (e) { toast(e.message, "err"); }
+      });
+    });
+}
+
+async function del(id) {
+  if (!confirm("移除该自选？（持仓标的建议保留）")) return;
+  try { await api(`/api/watchlist/${id}`, "DELETE"); loadWatchlist(); toast("已移除"); }
+  catch (e) { toast(e.message, "err"); }
+}
+
+/* ---- 添加自选（Modal） ---- */
+const STRATEGIES = {{ strategies|tojson }};
+const SNAME = Object.fromEntries(STRATEGIES.map(s => [s.code, s.name]));
+const sname = c => SNAME[c] || c;
+
+document.getElementById("add-btn").addEventListener("click", () => {
+  const chips = STRATEGIES.map(s => `
+    <label class="chip" data-code="${s.code}">
+      <input type="checkbox" value="${s.code}"><span class="tick"></span>${s.name}
+    </label>`).join("");
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">添加自选
+        <div class="sub">添加后即纳入量化监控范围</div>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>代码</label><input class="input" id="m-code" placeholder="如 513530"></div>
+        <div class="field"><label>名称（可选）</label><input class="input" id="m-name" placeholder="如 港股通红利ETF"></div>
+        <div class="field"><label>绑定策略</label><div class="chips" id="m-strategies">${chips}</div></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn primary" id="m-submit">添加</button>
+      </div>
+    </div>`, () => {
+      document.querySelectorAll("#m-strategies .chip").forEach(l => {
+        l.addEventListener("click", e => {
+          e.preventDefault();
+          const cb = l.querySelector("input");
+          cb.checked = !cb.checked;
+          l.classList.toggle("checked", cb.checked);
+        });
+      });
+      document.getElementById("m-code").focus();
+      document.getElementById("m-submit").addEventListener("click", async () => {
+        const code = document.getElementById("m-code").value.trim();
+        const name = document.getElementById("m-name").value.trim();
+        const strategies = [...document.querySelectorAll("#m-strategies input:checked")].map(i => i.value);
+        if (!code) { toast("请输入代码", "err"); return; }
+        try {
+          await api("/api/watchlist", "POST", { code, name, strategies });
+          closeModal(); loadWatchlist(); toast("已添加 " + code);
+        } catch (e) { toast(e.message, "err"); }
+      });
+    });
+});
+
+/* ---- 策略推荐 ---- */
+async function rec(wid, code) {
+  recCtx.wid = wid;
+  const card = document.getElementById("rec-card");
+  document.getElementById("rec-code").textContent = code;
+  document.getElementById("rec-reason").textContent = "正在计算多窗口回测…";
+  document.getElementById("rec-tbody").innerHTML = "";
+  card.classList.remove("hidden");
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const d = await api(`/api/recommend?code=${code}`);
+    document.getElementById("rec-code").textContent = `${code} · ${d.range.bars} 根K线`;
+    document.getElementById("rec-reason").textContent = d.recommend ? d.recommend.reason : "样本不足，暂无推荐";
+    recCtx.combo = d.recommend ? d.recommend.combo : [];
+    document.getElementById("rec-tbody").innerHTML = d.rows.map(r => `<tr>
+      <td><strong>${r.name}</strong></td>
+      <td class="num"><strong>${r.score === null ? "—" : r.score.toFixed(2)}</strong></td>
+      <td class="num ${pcls(r["3m"])}">${fmtPct(r["3m"])}</td>
+      <td class="num ${pcls(r["6m"])}">${fmtPct(r["6m"])}</td>
+      <td class="num ${pcls(r["1y"])}">${fmtPct(r["1y"])}</td>
+      <td class="num ${pcls(r["3y"])}">${fmtPct(r["3y"])}</td>
+      <td class="num ${pcls(r["all"])}">${fmtPct(r["all"])}</td>
+      <td class="num ${r.dd1y < 0 ? 'neg' : ''}">${r.dd1y === undefined ? "—" : fmtPct(r.dd1y, false)}</td>
+      <td class="num">${r.winall === undefined ? "—" : (r.winall * 100).toFixed(0) + "%"}</td>
+    </tr>`).join("");
+  } catch (e) {
+    document.getElementById("rec-reason").textContent = "推荐计算失败：" + e.message;
+  }
+}
+
+document.getElementById("apply-rec").addEventListener("click", async () => {
+  if (!recCtx.combo.length) { toast("没有可应用的推荐", "err"); return; }
+  try {
+    await api(`/api/watchlist/${recCtx.wid}/strategies`, "POST", { strategies: recCtx.combo });
+    toast("已应用：" + recCtx.combo.map(sname).join(" + "));
+    document.getElementById("rec-card").classList.add("hidden");
+    loadWatchlist();
+  } catch (e) { toast(e.message, "err"); }
+});
+
+/* ---- 运行信号扫描 ---- */
+document.getElementById("run-signals-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("run-signals-btn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 扫描中…';
+  try {
+    const d = await api("/api/signals/run", "POST", { dry_run: false });
+    const el = document.getElementById("run-result");
+    el.textContent = `标的 ${d.watch} 只 · 生成 ${d.generated.length} 条 · 跳过 ${d.skipped.length} 条`;
+    if (d.generated.length) {
+      toast(`生成 ${d.generated.length} 条信号，去信号中心处理`);
+    } else {
+      toast("扫描完成：当前无触发信号");
+    }
+    if (d.skipped.length) {
+      el.textContent += "（" + d.skipped.slice(0, 2).map(s => s.code + ": " + s.reason).join("；") + "…）";
+    }
+  } catch (e) { toast(e.message, "err"); }
+  finally {
+    btn.disabled = false;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10.5H13L13 2z"/></svg> 运行信号扫描';
+  }
+});
+
+loadWatchlist();
+</script>
+{% endblock %}

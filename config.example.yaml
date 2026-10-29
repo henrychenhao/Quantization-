@@ -1,0 +1,52 @@
+# A股量化系统 单一配置源
+
+data:
+  kline_dir: data/kline     # Parquet K线库目录
+  log_dir: logs             # 日志目录
+
+# 回测撮合规则（可配置）
+fees:
+  commission: 0.00025       # 佣金 万2.5
+  min_commission: 5         # 最低佣金 5 元
+  stamp_tax: 0.0005         # 股票卖出印花税 0.05%（ETF 免）
+  slippage: 0.001           # 滑点 0.1%
+
+# 账户：初始现金（首次使用写入 SQLite 账本）
+account:
+  initial_cash: 100000
+
+# 推送通道
+push:
+  channel: wecom            # wecom 企微群机器人
+  wecom_webhook: ""         # 填入企微群机器人 webhook 后启用真实推送（留空=模拟）
+
+# 定时调度（python main.py schedule 常驻；cron 字段可改）
+schedule:
+  heartbeat:  {hour: 9,  minute: 35}   # 交易日心跳推送 + 资产快照
+  eod_signal: {hour: 14, minute: 50}   # 尾盘信号扫描（四道校验→推送）
+  data_sync:  {hour: 17, minute: 30}   # 收盘后全量刷新自选K线
+  intraday:   5                        # 盘中实时轮询间隔（分钟）；0 表示关闭
+
+# 自选 = 量化监控范围（首次启动自动预置，页面可增删改）
+watchlist:
+  - code: "513530"
+    name: "港股通红利ETF华泰柏瑞"
+    strategies: [double_ma, macd]
+  - code: "002156"
+    name: "通富微电"
+    strategies: [boll_mr, donchian]
+  - code: "159107"
+    name: "创业板软件ETF富国"
+    strategies: [double_ma, macd]
+  - code: "159740"
+    name: "恒生科技ETF大成"
+    strategies: [rsi, double_ma]
+  - code: "515050"
+    name: "通信ETF华夏"
+    strategies: [donchian, double_ma]
+# AI 分析（DeepSeek 兼容 OpenAI 接口；api_key 留空时 AI 页会提示未配置）
+llm:
+  base_url: https://api.deepseek.com
+  api_key: ""
+  model: deepseek-chat
+  temperature: 0.3

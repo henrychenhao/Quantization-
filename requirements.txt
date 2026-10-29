@@ -1,0 +1,10 @@
+# A股量化系统依赖
+# P0 阶段最小集：数据 + 指标 + 回测
+akshare>=1.12.0        # A股行情数据源（免费、无需token）
+pandas>=2.0.0          # K线处理的事实标准
+numpy>=1.24.0          # 数值计算
+pyarrow>=14.0.0        # Parquet 存储（K线本地化）
+pyyaml>=6.0            # config.yaml 解析
+fastapi>=0.110.0       # Web 服务（回测工作台）
+uvicorn>=0.29.0        # ASGI 服务器
+jinja2>=3.1.0          # 页面模板apscheduler>=3.10.0      # 定时调度（心跳/尾盘信号/数据同步）

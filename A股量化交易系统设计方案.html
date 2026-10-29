@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A股量化交易系统设计方案</title>
+<!-- cover:variant=default, reason=技术方案正式文档，居中封面最稳 -->
+<style>
+/* ========== Reset & Base ========== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { min-height: 100%; }
+body {
+  position: relative;
+  font-family: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", "Noto Sans SC", sans-serif;
+  color: #1F2329;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 40px 24px;
+  background: linear-gradient(160deg, #F9FAFC 0%, #FFFFFF 45%, #E3EEFF 100%);
+  min-height: 100vh;
+}
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 45% 35% at 12% 8%, rgba(255,255,255,0.55) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 30% at 88% 90%, rgba(255,255,255,0.45) 0%, transparent 55%);
+}
+body > * { position: relative; z-index: 1; }
+
+/* ========== 封面 Hero ========== */
+.title {
+  position: relative;
+  overflow: hidden;
+  padding: 56px 40px;
+  text-align: center;
+  background: linear-gradient(135deg, #3C67FF 0%, #4E8CFF 50%, #13C2C2 100%);
+  color: #ffffff;
+  border-radius: 16px;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+}
+.title::before {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 70% 55% at 18% 82%, rgba(255,255,255,0.12) 0%, transparent 60%),
+    radial-gradient(ellipse 55% 40% at 82% 18%, rgba(255,255,255,0.08) 0%, transparent 55%);
+  pointer-events: none;
+}
+.title > *:not([data-decor="true"]) { position: relative; z-index: 1; }
+.title h1 { font-size: 28px; font-weight: 800; margin: 0 0 14px 0; letter-spacing: 1px; color: #ffffff; }
+.title .accent-line {
+  width: 48px; height: 3px; background: rgba(255,255,255,0.85);
+  margin: 0 auto 18px; border-radius: 2px;
+}
+.title p { font-size: 15px; color: rgba(255,255,255,0.85); margin: 0; line-height: 1.7; }
+
+/* ========== 章节标题 ========== */
+h1.heading {
+  font-size: 28px;
+  color: #3C67FF;
+  margin: 36px 0 16px 0;
+  font-weight: 700;
+  border-left: 4px solid #13C2C2;
+  padding-left: 16px;
+}
+h2.heading {
+  font-size: 22px;
+  color: #3C67FF;
+  margin: 28px 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #DCE6FF;
+  font-weight: 600;
+}
+
+/* ========== 正文 / 列表 ========== */
+.paragraph { font-size: 15px; color: #1F2329; line-height: 1.8; margin: 0 0 16px 0; text-indent: 2em; }
+.list { margin: 0 0 16px 0; padding-left: 24px; font-size: 15px; color: #1F2329; line-height: 1.8; }
+.list li { margin-bottom: 8px; }
+.list li::marker { color: #13C2C2; }
+
+/* ========== 正文区卡片化容器 ========== */
+.doc-section {
+  background: #FFFFFF;
+  border-radius: 14px;
+  padding: 24px 28px;
+  margin: 0 0 16px 0;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+}
+.doc-section .paragraph:last-child { margin-bottom: 0; }
+.doc-section .list:last-child { margin-bottom: 0; }
+
+/* ========== callout ========== */
+.callout {
+  margin: 0 0 16px 0;
+  padding: 16px 24px;
+  background: #D8F5F5;
+  border-left: 4px solid #13C2C2;
+  border-radius: 8px;
+}
+.callout[data-variant="warning"] { background: #FFF3E0; border-left-color: #FE9611; }
+.callout[data-variant="quote"]   { background: #f0fdfa; border-left-color: #14b8a6; }
+.callout p { font-size: 15px; color: #1F2329; margin: 0; line-height: 1.8; }
+
+/* ========== 表格 ========== */
+.table-wrap {
+  background: #FFFFFF;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+  overflow: hidden;
+  margin: 0 0 16px 0;
+}
+.table-caption {
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #DCE6FF, #D8F5F5);
+  color: #3C67FF;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+  border-bottom: 1px solid #E3E6EB;
+}
+table.table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+table.table thead th {
+  padding: 12px 16px;
+  text-align: left;
+  background: #DCE6FF;
+  color: #3C67FF;
+  font-weight: 700;
+  border-bottom: 2px solid #E3E6EB;
+  word-break: break-word;
+}
+table.table tbody td { padding: 12px 16px; border-bottom: 1px solid #E3E6EB; color: #1F2329; word-break: break-word; }
+table.table tbody tr:last-child td { border-bottom: none; }
+table.table tbody tr:hover { background: #D8F5F5; }
+
+/* ========== stat ========== */
+.stat-grid { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 16px 0; }
+.stat {
+  flex: 1 1 170px;
+  min-width: 0;
+  text-align: center;
+  padding: 24px;
+  background: #FFFFFF;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  border-top: 3px solid #13C2C2;
+}
+.stat .num { font-size: 28px; color: #13C2C2; font-weight: 800; line-height: 1.1; }
+.stat .label { font-size: 12px; color: #5C6273; margin-top: 6px; }
+
+/* ========== timeline ========== */
+.timeline { list-style: none; padding: 0; margin: 0 0 16px 0; }
+.timeline li {
+  position: relative;
+  padding-left: 28px;
+  padding-bottom: 18px;
+  border-left: 2px solid #D8F5F5;
+  margin-left: 6px;
+}
+.timeline li:last-child { border-left-color: transparent; padding-bottom: 0; }
+.timeline li::before {
+  content: '';
+  position: absolute;
+  left: -7px; top: 5px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: #13C2C2;
+  border: 2px solid #F7F8FA;
+  box-shadow: 0 0 0 2px #D8F5F5;
+}
+.timeline strong { font-size: 14px; color: #13C2C2; }
+.timeline p { font-size: 15px; color: #1F2329; margin: 4px 0 0 0; line-height: 1.8; }
+
+/* ========== code ========== */
+.code {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 16px 24px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-x: auto;
+  margin: 0 0 16px 0;
+  font-family: 'Cascadia Code', 'Fira Code', 'SF Mono', 'Source Code Pro', Consolas, monospace;
+}
+
+/* ========== card ========== */
+.card-grid { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 16px 0; }
+.card-grid[data-cols="2"] .card { flex: 1 1 calc((100% - 24px) / 2); min-width: 0; }
+.card-grid[data-cols="3"] .card { flex: 1 1 calc((100% - 40px) / 3); min-width: 0; }
+.card-grid[data-cols="4"] .card { flex: 1 1 calc((100% - 52px) / 4); min-width: 0; }
+.card {
+  flex: 1;
+  background: #FFFFFF;
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  border-top: 3px solid #13C2C2;
+}
+.card h3 { font-size: 18px; color: #3C67FF; margin: 0 0 8px 0; font-weight: 700; }
+.card p  { font-size: 14px; color: #5C6273; margin: 0; line-height: 1.7; }
+
+/* ========== 尾页 ========== */
+.end_page {
+  margin-top: 24px;
+  padding: 56px 24px;
+  text-align: center;
+  background: linear-gradient(135deg, #DCE6FF 0%, #D8F5F5 100%);
+  border-radius: 16px;
+}
+.end_page h1 { font-size: 28px; color: #3C67FF; margin: 0 0 16px 0; font-weight: 800; }
+.end_page p  { font-size: 15px; color: #5C6273; margin: 0; line-height: 1.8; }
+
+/* ========== 响应式 ========== */
+@media screen and (max-width: 600px) {
+  body { padding: 16px !important; }
+  h1 { font-size: 22px !important; }
+  h2 { font-size: 18px !important; }
+  h3 { font-size: 16px !important; }
+  .stat-grid, .card-grid { flex-direction: column; }
+}
+
+/* ========== 打印优化 ========== */
+@media print {
+  body {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #F7F8FA;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body::before { display: none; }
+  .title, .end_page { border-radius: 0; box-shadow: none; }
+  .doc-section, .card, .stat, .table-wrap { box-shadow: none; border: 1px solid #E3E6EB; }
+  section { break-inside: auto !important; }
+  .stat-grid[data-cols="4"] { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .stat-grid[data-cols="4"] .stat { flex: none; min-width: 0; padding: 18px 8px; }
+  .stat-grid[data-cols="4"] .stat .num { font-size: 24px; }
+  .stat-grid[data-cols="4"] .stat .label { font-size: 10px; margin-top: 4px; }
+  .card, .stat, .timeline li, .callout { break-inside: avoid !important; }
+  .table-wrap { break-inside: auto !important; }
+  table.table thead { display: table-header-group; }
+  table.table tr { break-inside: avoid !important; }
+}
+</style>
+</head>
+<body class="mode-doc" data-palette="ink-blue">
+
+  <!-- ===== 封面 ===== -->
+  <section class="title">
+    <h1>A股量化交易系统设计方案</h1>
+    <div class="accent-line"></div>
+    <p>基于 Python 的本地半自动量化闭环 · 信号 → 人工下单 → 记账<br>方案版本 V1.0 · 2026 年 10 月</p>
+  </section>
+
+  <!-- ===== 一、项目定位与核心理念 ===== -->
+  <h1 class="heading">一、项目定位与核心理念</h1>
+  <div class="doc-section">
+    <p class="paragraph">本系统面向个人投资者，是一套运行在本机（Mac/PC）的 A 股量化辅助系统：它不替你下单，只做三件事——按策略发现机会、把信号推到手机、成交后完成记账闭环。所有行情与账本数据留在本地，不做任何云端托管。这一定位直接来源于参考系统的实盘形态：它同样运行在一台 MacBook 上，通过微信推送信号，由人在券商 App 完成交易，再回系统确认记账。</p>
+  </div>
+
+  <div class="card-grid" data-cols="3" data-layout="row">
+    <div class="card">
+      <h3>半自动，不做全自动</h3>
+      <p>系统只负责"发现"，买卖决策与下单由人完成。规避程序化接入券商的合规门槛与账户风险，也保留人对极端行情的最后否决权。参考系统的每条信号都注明"请自行决策下单，成交后在系统确认记账"。</p>
+    </div>
+    <div class="card">
+      <h3>本地私有运行</h3>
+      <p>单机部署，Web 控制台走 127.0.0.1 访问，行情库、账本、日志全部落本地磁盘。每日心跳推送（自选数、现金、持仓市值、总资产）既是账户播报，也是进程存活探针。</p>
+    </div>
+    <div class="card">
+      <h3>小步可验证</h3>
+      <p>每一期交付都能独立跑出结果：先有回测，再有信号，后有界面。任意阶段停下，系统都处于可用状态；加一个策略不动引擎一行代码（插件注册制）。</p>
+    </div>
+  </div>
+
+  <div class="stat-grid" data-cols="4" data-layout="row">
+    <div class="stat"><div class="num">6</div><div class="label">内置经典策略</div></div>
+    <div class="stat"><div class="num">4</div><div class="label">道信号前置校验</div></div>
+    <div class="stat"><div class="num">2</div><div class="label">条推送触达通道</div></div>
+    <div class="stat"><div class="num">4</div><div class="label">页 Web 控制台</div></div>
+  </div>
+
+  <!-- ===== 二、参考系统提炼 ===== -->
+  <h1 class="heading">二、参考系统提炼：九个能力域</h1>
+  <p class="paragraph">所提供的 12 张截图来自一套已在运行的 A 股半自动量化系统（本地部署 + 微信通知 + 本机 Web 界面）。逐张拆解后，其能力可归纳为下表九个域，本方案全部吸收并映射为待建模块。</p>
+  <div class="table-wrap">
+    <div class="table-caption">参考系统九大能力域与本方案映射</div>
+    <table class="table" data-caption="参考系统九大能力域与本方案映射">
+      <colgroup>
+        <col style="width:15%"><col style="width:45%"><col style="width:40%">
+      </colgroup>
+      <thead>
+        <tr><th>能力域</th><th>参考系统中的表现（截图实证）</th><th>本方案对应动作</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>行情数据</td><td>覆盖个股与 ETF 日 K，示例标的 513530 存有 2022-04 至 2026-10 共 1088 根 K 线</td><td>AkShare 日线 + 实时快照，Parquet 本地分区存储</td></tr>
+        <tr><td>自选监控</td><td>自选股即监控范围，持仓标的强制保留；每标的独立开关并绑定多个策略标签</td><td>watchlist 表 + 量化开关 + 策略多选绑定</td></tr>
+        <tr><td>回测引擎</td><td>单策略回测（参数可调）；六策略同区间同资金横向对比报表</td><td>自研回测核心，单策略与多策略对比两种模式</td></tr>
+        <tr><td>多窗口评估</td><td>近1月/3月/6月/1年/2年/3年/全区间七档窗口，策略收益、回撤、胜率、超额一次对比</td><td>一键多窗口对比表与分组柱状图</td></tr>
+        <tr><td>回测可视化</td><td>K 线买卖点标注图、净值曲线对基准、回撤对比图、月度收益热力图</td><td>ECharts 四类报表同口径复刻</td></tr>
+        <tr><td>策略推荐</td><td>按风险调整得分（近期平均收益 / 最深回撤，回撤下限 3%）推荐策略并可一键应用</td><td>P4 期实现评分推荐与一键覆盖配置</td></tr>
+        <tr><td>信号管理</td><td>待处理信号卡片（方向/数量/价格/预计金额/触发逻辑）+ 流水状态"已跟随"</td><td>信号状态机：待处理 → 已跟随 / 已忽略</td></tr>
+        <tr><td>实时校验</td><td>引擎日志显示"买入信号但资金不足/价格异常，跳过"，卖出信号校验当前持仓</td><td>资金/价格/持仓/去重四道前置闸门</td></tr>
+        <tr><td>心跳推送</td><td>每日心跳推送监控数、现金、持仓市值、总资产；信号经企微与微信双通道触达</td><td>心跳模板 + 双推送通道 + 推送日志落库</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <aside class="callout" data-variant="tip">
+    <p>一个值得继承的细节：参考系统的日志按 qsig.engine.realtime（引擎）、qsig.notify（通知）等前缀分模块输出，说明其"引擎与通知解耦"。本方案沿用同样的模块边界——日志前缀即模块名，排查问题按前缀过滤即可。</p>
+  </aside>
+
+  <!-- ===== 三、总体架构 ===== -->
+  <h1 class="heading">三、总体架构</h1>
+  <p class="paragraph">五层结构，依赖单向向下：上层只调用相邻下层，策略层以插件注册表组织，引擎层不感知具体策略实现。任何一层可独立替换（例如数据源适配层更换行情供应商，不影响策略与引擎）。</p>
+  <div class="card-grid" data-cols="3" data-layout="row">
+    <div class="card">
+      <h3>应用层</h3>
+      <p>Web 控制台（FastAPI + Jinja2 + ECharts，本机 8000 端口）· 心跳与信号推送（企微机器人 / Server酱）· 分模块结构化日志。</p>
+    </div>
+    <div class="card">
+      <h3>引擎层</h3>
+      <p>实时监控引擎（尾盘触发 + 四道校验 + 去重）· 回测引擎（逐 K 线事件驱动 + 绩效计算）· 策略推荐评分（P4）。</p>
+    </div>
+    <div class="card">
+      <h3>策略层</h3>
+      <p>策略插件注册表（六大经典策略）· 指标库（MA / MACD / BOLL / RSI / Donchian）· 统一信号协议（方向/数量/理由）。</p>
+    </div>
+    <div class="card">
+      <h3>数据层</h3>
+      <p>行情适配器（AkShare 主源 + BaoStock 备源）· K 线库（Parquet 按代码分区）· 业务库（SQLite 六张表：自选/信号/流水/持仓/快照/推送日志）。</p>
+    </div>
+    <div class="card">
+      <h3>接入层</h3>
+      <p>APScheduler 调度（心跳、尾盘信号、收盘数据同步三类 cron 任务）· config.yaml 单一配置源 · 交易日历本地缓存。</p>
+    </div>
+    <div class="card">
+      <h3>运行载体</h3>
+      <p>个人电脑常驻进程（macOS launchd 托管），单命令启动；全部组件零外网依赖，仅行情拉取与推送出网。</p>
+    </div>
+  </div>
+
+  <h2 class="heading">三条主链路</h2>
+  <ul class="list">
+    <li><strong>信号链路（交易日 14:50）</strong>：拉实时快照 → 逐标的 × 逐绑定策略计算指标 → 四道校验闸门 → 生成信号入库 → 推送企微 → 人工下单 → 回执记账 → 更新持仓与现金。</li>
+    <li><strong>心跳链路（交易日 09:35）</strong>：读取账户快照 → 推送"监控 N 只自选（开启 M 只）· 现金 · 持仓市值 · 总资产"。</li>
+    <li><strong>数据链路（每个交易日 17:30）</strong>：增量拉取当日日线 → 追加 Parquet → 刷新交易日历缓存。</li>
+  </ul>
+
+  <!-- ===== 四、技术选型 ===== -->
+  <h1 class="heading">四、技术选型</h1>
+  <p class="paragraph">选型原则：只选主流、文档齐全、无编译负担的组件，让精力花在策略与引擎上，而不是环境维护上。全部组件 pip 即装。</p>
+  <div class="table-wrap">
+    <div class="table-caption">技术栈清单</div>
+    <table class="table" data-caption="技术栈清单">
+      <colgroup>
+        <col style="width:15%"><col style="width:29%"><col style="width:56%">
+      </colgroup>
+      <thead>
+        <tr><th>领域</th><th>选型</th><th>理由与备注</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>运行时</td><td>Python 3.11+，venv 虚拟环境</td><td>量化生态最全；建议配 uv 或 pip 管理依赖，requirements.txt 锁版本</td></tr>
+        <tr><td>数据处理</td><td>pandas + numpy</td><td>K 线即 DataFrame，指标计算与回测向量化的事实标准</td></tr>
+        <tr><td>行情数据源</td><td>AkShare（主）+ BaoStock（备）</td><td>免费、无需 token；日线全量与实时快照齐备。开源接口偶有变更，故以适配层隔离</td></tr>
+        <tr><td>技术指标</td><td>自研 indicators.py</td><td>MA / MACD / BOLL / RSI / Donchian 合计约百余行，避免 TA-Lib 的编译依赖，指标口径完全可控</td></tr>
+        <tr><td>回测引擎</td><td>自研事件驱动核心</td><td>信号逐 K 线回放 + 费税模拟 + 绩效计算，总量约五百行，全部可审计</td></tr>
+        <tr><td>业务存储</td><td>SQLite（sqlite3 标准库）</td><td>单文件零运维；自选、信号、流水、快照、推送日志六张表</td></tr>
+        <tr><td>K 线存储</td><td>Parquet（pyarrow）按代码分区</td><td>列式压缩省空间，pandas 直读，单标的四年日线仅数百 KB</td></tr>
+        <tr><td>任务调度</td><td>APScheduler</td><td>cron 表达式驱动心跳 / 尾盘信号 / 数据同步；交易日判断前置过滤</td></tr>
+        <tr><td>Web 服务</td><td>FastAPI + Jinja2 + ECharts</td><td>本机单进程即可跑起四页控制台，与参考系统同为 127.0.0.1:8000</td></tr>
+        <tr><td>消息推送</td><td>企微群机器人 webhook（主）+ Server酱（备）</td><td>企微机器人免费且到达可靠；Server酱可直推个人微信，做成可插拔通道</td></tr>
+        <tr><td>日志</td><td>loguru</td><td>一行接入文件轮转，模块名作前缀复刻参考系统的排查体验</td></tr>
+        <tr><td>进程托管</td><td>macOS launchd / Linux systemd</td><td>开机自启 + 崩溃拉起；心跳推送天然成为存活告警</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <aside class="callout" data-variant="warning">
+    <p>为什么不用 Backtrader / VNPy 等现成框架：它们为通用场景设计、抽象层级深，个人系统的策略逻辑总共只有百余行，框架的学习与调试成本反而高于自研；且参考系统的口径（收盘触发、回合制胜率、超额对买入持有）需要完全透明的撮合细节才能对齐。自研核心的回报是每一笔回测成交都可解释。</p>
+  </aside>
+
+  <!-- ===== 五、核心模块设计 ===== -->
+  <h1 class="heading">五、核心模块设计</h1>
+
+  <h2 class="heading">5.1 行情数据模块</h2>
+  <div class="doc-section">
+    <p class="paragraph">适配器模式隔离数据源：DataSource 接口定义 get_daily（日线批量）与 get_spot（实时快照）两个方法，AkShare 与 BaoStock 各实现一份，主备可切换，切换不动上层代码。首次使用全量拉成历史，此后每日增量追加；交易日历本地缓存，调度器先判交易日后才触发任务。</p>
+    <ul class="list">
+      <li>统一 K 线 schema：code / date / open / high / low / close / volume / amount，个股与 ETF 完全同构。</li>
+      <li>标的元数据打标交易规则：股票与多数场内 ETF 为 T+1，跨境 ETF（如 513530 港股通红利、恒生科技类）为 T+0；回测撮合与信号校验都读取该标记。</li>
+      <li>ETF 场内交易免印花税、股票卖出收印花税，费率模型按品种区分。</li>
+    </ul>
+  </div>
+
+  <h2 class="heading">5.2 策略插件层</h2>
+  <p class="paragraph">所有策略实现统一接口，由注册表装配；自选股绑定策略时引用注册表中的策略标识。新增策略 = 新增一个文件 + 注册表加一行。</p>
+  <pre class="code" data-lang="python"><code>class BaseStrategy(ABC):
+    code: str                      # 策略标识，如 "double_ma"
+    name: str                      # 展示名，如 "双均线交叉"
+    params: dict                   # 默认参数，可被配置覆盖
+
+    def warmup(self) -&gt; int:
+        """返回指标预热所需的最少 K 线根数"""
+
+    def on_bar(self, df: DataFrame) -&gt; Signal | None:
+        """输入截至当前的历史 K 线，输出买卖信号或 None"""
+
+STRATEGIES = {"double_ma": DoubleMA, "macd": MACD, "boll_mr": BollMR,
+              "donchian": Donchian, "rsi": RSI, "grid": Grid}</code></pre>
+  <div class="table-wrap">
+    <div class="table-caption">六大内置策略（触发逻辑口径对齐参考系统）</div>
+    <table class="table" data-caption="六大内置策略">
+      <colgroup>
+        <col style="width:14%"><col style="width:13%"><col style="width:11%"><col style="width:20%"><col style="width:42%">
+      </colgroup>
+      <thead>
+        <tr><th>策略标识</th><th>名称</th><th>类型</th><th>默认参数</th><th>触发逻辑示例</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>double_ma</td><td>双均线交叉</td><td>趋势</td><td>short=5, long=20</td><td>买入：MA5 上穿 MA20；卖出：MA5 下穿 MA20（示例：收 1.54 触发卖出）</td></tr>
+        <tr><td>macd</td><td>MACD 金叉死叉</td><td>趋势</td><td>fast=12, slow=26, signal=9</td><td>买入：DIF 上穿 DEA 金叉；卖出：DIF 下穿 DEA 死叉（示例：DIF -0.008 / DEA -0.007）</td></tr>
+        <tr><td>boll_mr</td><td>布林带均值回归</td><td>震荡</td><td>n=20, k=2</td><td>买入：收盘跌破下轨（超卖，博回归，示例：收 0.66 跌破下轨 0.66）；卖出：收盘回到中轨或上穿上轨</td></tr>
+        <tr><td>donchian</td><td>唐奇安通道突破</td><td>趋势</td><td>entry=20, exit=10</td><td>买入：突破 N 日最高；卖出：收盘跌破 10 日最低（示例：收 47.78 跌破 48.05）</td></tr>
+        <tr><td>rsi</td><td>RSI 超卖回归</td><td>震荡</td><td>n=14, low=30, high=70</td><td>买入：RSI(14) 下穿 30（示例：当前 29.7 超卖）；卖出：RSI 上穿 70</td></tr>
+        <tr><td>grid</td><td>网格交易</td><td>震荡</td><td>买/卖步距 3%，5 档，每档 20%，底仓 0%</td><td>锚点下每跌一档买入一档；每档买入价上方按卖出步距挂目标卖出</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="heading">5.3 回测引擎</h2>
+  <div class="doc-section">
+    <p class="paragraph">事件驱动逐 K 线回放：窗口起点前的历史 K 线仅用于指标预热，仿真从窗口起点开始、初始空仓——与参考系统口径一致，杜绝前视偏差。多策略对比时，六个策略跑同一区间、同一初始资金，结果可直接横向比较。</p>
+    <ul class="list">
+      <li><strong>绩效八指标</strong>：总收益、年化收益、超额收益（对买入持有基准）、最大回撤、夏普比率、回合胜率（一买一卖计一回合）、交易笔数、期末资产。</li>
+      <li><strong>规则差异处理</strong>：T+0 标的当日可卖、T+1 强制隔日；买入按 100 股整手；ETF 免印花税。</li>
+    </ul>
+  </div>
+  <div class="table-wrap">
+    <div class="table-caption">回测撮合规则（可配置项）</div>
+    <table class="table" data-caption="回测撮合规则">
+      <colgroup>
+        <col style="width:20%"><col style="width:80%">
+      </colgroup>
+      <thead>
+        <tr><th>规则项</th><th>默认约定</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>成交时点</td><td>信号于当日收盘价成交（与实盘"尾盘 14:50 快照触发、随即下单"一致，回测实盘同口径）</td></tr>
+        <tr><td>佣金与税</td><td>佣金万 2.5、最低 5 元；股票卖出印花税 0.05%，ETF 免</td></tr>
+        <tr><td>交易单位</td><td>100 股整手（1 手）；卖出允许零股清仓</td></tr>
+        <tr><td>滑点与仓位</td><td>滑点默认 0.1%；资金按 fraction 比例分批，网格策略按档位占比</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 class="heading">5.4 实时监控引擎：四道校验闸门</h2>
+  <p class="paragraph">每条信号在推送给用户之前必须过完四道闸门，任何一道不过即跳过并写日志——参考系统的引擎日志（"买入信号但资金不足/价格异常，跳过"）证明这正是其实盘行为。</p>
+  <div class="table-wrap">
+    <div class="table-caption">信号前置校验规则</div>
+    <table class="table" data-caption="信号前置校验规则">
+      <colgroup>
+        <col style="width:14%"><col style="width:56%"><col style="width:30%">
+      </colgroup>
+      <thead>
+        <tr><th>闸门</th><th>规则</th><th>不通过的处置</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>价格校验</td><td>快照价非空非零、非涨跌停一字板可成交、非停牌</td><td>跳过并记日志（qsig.engine 前缀）</td></tr>
+        <tr><td>资金校验</td><td>买入信号需"可用现金 ≥ 建议股数 × 现价"，建议股数自动向下取整手</td><td>按可用资金收缩股数，或不足一手则跳过</td></tr>
+        <tr><td>持仓校验</td><td>卖出信号需当前持仓 ≥ 建议卖出股数</td><td>按实际持仓收缩，持仓为零则跳过</td></tr>
+        <tr><td>去重校验</td><td>同一标的 × 同一策略当日只生成一条信号</td><td>丢弃重复，日志留痕</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="doc-section">
+    <p class="paragraph">信号状态机只有三个态：待处理（pending）→ 已跟随（followed）或已忽略（ignored）。点击"已跟随"必须补录成交流水，系统随即更新持仓与现金——这保证后续资金校验用的永远是真实账本，也让胜率统计天然是"已跟随口径"而非纸面口径。</p>
+  </div>
+
+  <h2 class="heading">5.5 记账模块</h2>
+  <div class="doc-section">
+    <p class="paragraph">记账以交易流水为唯一事实源：持仓（股数、均价）与现金全部由流水表推导，另设手工调仓流水（分红、拆合、误记修正）兜底。每个交易日收盘后生成资产快照（现金、持仓市值、总资产），供心跳推送与收益曲线使用。回执记账支持两种入口：Web 表单填写，或回复推送消息中的流水号带数量价格。</p>
+  </div>
+
+  <h2 class="heading">5.6 推送模块</h2>
+  <p class="paragraph">通道抽象 + 消息模板。企微群机器人为默认主通道（免费、稳定、支持 markdown 卡片）；Server酱通道直推个人微信，配置里切换。推送失败自动重试两次并落推送日志表，日志里可查每条信号的触达状态。</p>
+  <pre class="code" data-lang="text"><code>【每日心跳】2026-10-23 周五 · 交易日 · 盘中
+监控 8 只自选（开启 4 只）
+现金 4,472 · 持仓市值 159,978 · 总资产 164,450
+
+【交易信号】🔴 拟买入 · 159107 创业板软件ETF
+建议 6700 股（67 手）· 预计 4,402 元
+现价 0.66 · 布林带均值回归
+触发：收盘 0.66 跌破布林下轨 0.66（超卖，博均值回归）
+可用现金 4,472 · 请自行决策下单，成交后在系统确认记账</code></pre>
+
+  <h2 class="heading">5.7 Web 控制台</h2>
+  <div class="table-wrap">
+    <div class="table-caption">页面清单（本机 127.0.0.1:8000）</div>
+    <table class="table" data-caption="Web控制台页面清单">
+      <colgroup>
+        <col style="width:15%"><col style="width:21%"><col style="width:64%">
+      </colgroup>
+      <thead>
+        <tr><th>路由</th><th>页面</th><th>核心功能</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>/</td><td>自选监控</td><td>自选列表（代码/名称/开关/策略标签/持仓/加入时间），策略配置、推荐与移除；持仓标的强制保留</td></tr>
+        <tr><td>/backtest</td><td>回测工作台</td><td>标的与区间选择（近3月~全区间快捷档）、策略多选、参数调节、运行回测；多策略对比表 + 净值/回撤/月度热力图</td></tr>
+        <tr><td>/signals</td><td>信号中心</td><td>待处理信号卡片（方向/数量/价格/预计金额/触发逻辑）、历史流水、状态流转（跟随/忽略）</td></tr>
+        <tr><td>/account</td><td>账户账本</td><td>持仓与现金、成交流水、回执记账表单、资产曲线</td></tr>
+        <tr><td>/docs</td><td>接口文档</td><td>FastAPI 自动生成的 OpenAPI 文档，便于后续接命令行或脚本调用</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== 六、数据模型 ===== -->
+  <h1 class="heading">六、数据模型</h1>
+  <p class="paragraph">业务数据用 SQLite 六张表承载；K 线不进数据库，按代码切分为 Parquet 文件（data/kline/{code}.parquet），pandas 直读直写，备份即拷目录。</p>
+  <div class="table-wrap">
+    <div class="table-caption">SQLite 表清单</div>
+    <table class="table" data-caption="SQLite表清单">
+      <colgroup>
+        <col style="width:19%"><col style="width:35%"><col style="width:46%">
+      </colgroup>
+      <thead>
+        <tr><th>表名</th><th>职责</th><th>关键字段</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>watchlist</td><td>自选即监控范围</td><td>code, name, quant_enabled, strategies(JSON), t_rule(T+0/T+1), added_at</td></tr>
+        <tr><td>signal</td><td>信号生命周期</td><td>code, side, strategy, reason, ref_price, suggest_shares, status, created_at</td></tr>
+        <tr><td>trade</td><td>成交流水（唯一事实源）</td><td>signal_id, code, side, price, shares, fee, traded_at, note</td></tr>
+        <tr><td>position</td><td>持仓视图（流水推导）</td><td>code, shares, avg_cost, updated_at</td></tr>
+        <tr><td>asset_snapshot</td><td>每日资产快照</td><td>date, cash, market_value, total</td></tr>
+        <tr><td>push_log</td><td>推送审计</td><td>channel, signal_id, title, status, created_at</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== 七、工程结构 ===== -->
+  <h1 class="heading">七、工程结构与配置</h1>
+  <pre class="code" data-lang="text"><code>quant/
+├── main.py                 # 入口：启动调度器 + Web
+├── config.yaml             # 唯一配置源
+├── requirements.txt
+├── app/
+│   ├── datasource/         # AkShare/BaoStock 适配层 + 交易日历
+│   ├── indicators.py       # MA/MACD/BOLL/RSI/Donchian
+│   ├── strategy/           # 六个策略插件 + 注册表
+│   ├── backtest/           # 回测引擎 + 绩效计算
+│   ├── engine/             # 实时监控引擎（校验 + 信号生成）
+│   ├── account/            # 记账 / 持仓推导 / 资产快照
+│   ├── notify/             # 企微 / Server酱 双通道
+│   └── web/                # FastAPI 页面与接口
+├── data/
+│   ├── quant.db            # SQLite 业务库
+│   └── kline/{code}.parquet
+└── logs/                   # 分模块日志（前缀=模块名）</code></pre>
+  <pre class="code" data-lang="yaml"><code>watchlist:
+  - {code: "513530", name: "港股通红利ETF", quant_enabled: true,
+     strategies: [double_ma, macd], t_rule: T0}
+  - {code: "002156", name: "通富微电", quant_enabled: true,
+     strategies: [boll_mr, donchian], t_rule: T1}
+fees: {commission: 0.00025, min_commission: 5, stamp_tax: 0.0005, slippage: 0.001}
+push:
+  default_channel: wecom_bot
+  wecom_webhook: "https://qyapi.weixin.qq.com/.../key=xxx"
+schedule:
+  heartbeat:   {cron: "35 9 * * 1-5",  desc: 交易日心跳推送}
+  eod_signal:  {cron: "50 14 * * 1-5", desc: 尾盘信号计算与推送}
+  data_sync:   {cron: "30 17 * * 1-5", desc: 收盘后日线增量同步}</code></pre>
+
+  <!-- ===== 八、实施路线图 ===== -->
+  <h1 class="heading">八、实施路线图</h1>
+  <p class="paragraph">四期主体 + 一期进阶，每期结束都是可独立使用的系统。先回测后实盘信号，先命令行后界面，先把钱算清楚再谈自动化。</p>
+  <ol class="timeline">
+    <li>
+      <strong>P0 · 第 1-2 周 · 地基与回测闭环</strong>
+      <p>搭环境与工程骨架，数据层（AkShare 适配 + Parquet + 交易日历）、指标库、双均线策略、回测核心与绩效八指标；产出：任选一个 ETF 命令行跑出单策略回测报告。这是全系统价值密度最高的一步，验证"数据 → 策略 → 回测"最小闭环。</p>
+    </li>
+    <li>
+      <strong>P1 · 第 3-4 周 · 策略矩阵与多窗口</strong>
+      <p>补齐六个策略与注册表，实现多策略横向对比与七档多窗口评估（对买入持有基准），K 线信号图、净值/回撤对比图、月度热力图三类可视化。</p>
+    </li>
+    <li>
+      <strong>P2 · 第 5-6 周 · 信号、推送与记账闭环</strong>
+      <p>实时监控引擎 + 四道校验闸门 + 信号表，企微推送（心跳与信号模板），回执记账与持仓推导。此期结束后即可低资金实测信号链路，暂用命令行交互，不等界面。</p>
+    </li>
+    <li>
+      <strong>P3 · 第 7-8 周 · Web 控制台</strong>
+      <p>自选监控、回测工作台、信号中心、账户账本四页上线，ECharts 图表与配置表单化，本机 127.0.0.1:8000 常驻。</p>
+    </li>
+    <li>
+      <strong>P4 · 进阶（按需启动）</strong>
+      <p>策略推荐评分（近期收益/最深回撤，对齐参考系统）与一键应用、盘中分钟级轮询、组合级风控（单标的仓位上限、总回撤熔断）、多市场数据源扩展预留。</p>
+    </li>
+  </ol>
+
+  <!-- ===== 九、风险与对策 ===== -->
+  <h1 class="heading">九、风险与对策</h1>
+  <div class="table-wrap">
+    <div class="table-caption">主要风险清单</div>
+    <table class="table" data-caption="主要风险清单">
+      <colgroup>
+        <col style="width:17%"><col style="width:31%"><col style="width:52%">
+      </colgroup>
+      <thead>
+        <tr><th>风险</th><th>影响</th><th>对策</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>数据源接口变动</td><td>行情中断，信号停发而不自知</td><td>适配层隔离 + BaoStock 备源 + 拉数失败即推送告警（心跳本身是探针，未收到心跳即异常）</td></tr>
+        <tr><td>回测过拟合</td><td>回测漂亮、实盘失效</td><td>强制多窗口对比看稳健性，参数取默认不精调；参考系统案例值得借鉴——某标的策略全区间胜率仅 38%、最大回撤 -8.4%，靠"少亏"仍大幅跑赢买入持有的 -62.2%</td></tr>
+        <tr><td>半自动执行偏差</td><td>信号发了没人执行，或情绪化追单</td><td>信号必须闭环（跟随/忽略二选一），胜率按"已跟随"口径统计，让执行纪律可见</td></tr>
+        <tr><td>品种规则差异</td><td>T+0/T+1、印花税差异导致回测失真</td><td>标的元数据打标交易规则，撮合与费率引擎按品种分派</td></tr>
+        <tr><td>本机常驻不稳</td><td>休眠/断电导致盘中任务未跑</td><td>launchd 托管崩溃拉起；调度集中在尾盘 14:50 一档，电脑白天合盖也不影响主链路</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===== 十、待确认决策点 ===== -->
+  <h1 class="heading">十、待确认决策点</h1>
+  <p class="paragraph">以下三点不影响架构，但影响 P0 的落地形态，开工前需定：</p>
+  <div class="card-grid" data-cols="3" data-layout="row">
+    <div class="card">
+      <h3>部署形态</h3>
+      <p>Mac 本机常驻（与参考系统一致，零成本，合盖风险由尾盘单时点规避）或轻量云服务器（7×24 稳定，推送不断线）。建议先本机，信号链路跑稳后再迁。</p>
+    </div>
+    <div class="card">
+      <h3>推送主通道</h3>
+      <p>企微群机器人（免费、稳定，需自建一个群拉机器人）或 Server酱（直推个人微信，免费额度有限）。两者都已纳入通道抽象，可后续随时切换。</p>
+    </div>
+    <div class="card">
+      <h3>多市场扩展</h3>
+      <p>参考系统同时跑了加密货币（OKX 模块）。若计划纳入，DataSource 抽象与信号 schema 从 P0 起就按多市场字段设计；若仅 A 股，可简化。</p>
+    </div>
+  </div>
+
+  <aside class="callout" data-variant="tip">
+    <p>落地建议：先用 P0 两周把回测闭环跑起来，拿自己关注的标的实测六个策略的成败——用数据决定要不要继续投入 P2 的实盘信号链路，而不是先写完系统再找用途。</p>
+  </aside>
+
+  <!-- ===== 尾页 ===== -->
+  <section class="title end_page">
+    <h1>先把回测跑通，再让系统替你盯盘</h1>
+    <p>方案 V1.0 · 2026 年 10 月<br>下一步：确认三个决策点后，从 P0 地基与回测闭环开工</p>
+  </section>
+
+</body>
+</html>
