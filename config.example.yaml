@@ -24,7 +24,7 @@ risk:
 # 推送通道
 push:
   channel: wecom            # wecom 企微群机器人
-  wecom_webhook: ""         # 填入企微群机器人 webhook 后启用真实推送（留空=模拟）
+  wecom_webhook: ""          # 填入企微群机器人 webhook 后启用真实推送（留空=模拟，仅记录推送日志）
 
 # 定时调度（python main.py schedule 常驻；cron 字段可改）
 schedule:
