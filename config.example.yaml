@@ -15,6 +15,12 @@ fees:
 account:
   initial_cash: 100000
 
+# 组合级风控（信号闸门5，仅约束买入信号；全部 0 = 不限制，保持原有行为）
+risk:
+  max_position_ratio: 0.8   # 总仓位上限：买入后全部持仓市值 / 总资产（0.8 = 最多 80% 仓位）
+  max_single_ratio: 0.3     # 单标的市值 / 总资产 上限（0.3 = 单只不超过 30%；网格多档满仓可达 100%，按需调大）
+  min_cash_ratio: 0.05      # 买入后现金 ≥ 初始资金 × 该比例（0.05 = 至少预留 5% 现金）
+
 # 推送通道
 push:
   channel: wecom            # wecom 企微群机器人
@@ -23,7 +29,7 @@ push:
 # 定时调度（python main.py schedule 常驻；cron 字段可改）
 schedule:
   heartbeat:  {hour: 9,  minute: 35}   # 交易日心跳推送 + 资产快照
-  eod_signal: {hour: 14, minute: 50}   # 尾盘信号扫描（四道校验→推送）
+  eod_signal: {hour: 14, minute: 50}   # 尾盘信号扫描（五道校验→推送）
   data_sync:  {hour: 17, minute: 30}   # 收盘后全量刷新自选K线
   intraday:   5                        # 盘中实时轮询间隔（分钟）；0 表示关闭
 

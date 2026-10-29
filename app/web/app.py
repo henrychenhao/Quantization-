@@ -20,6 +20,7 @@ from app.config import load_config
 from app.datasource.akshare_source import AkShareSource
 from app.datasource.kline_store import get_or_fetch
 from app.engine import signals as signal_engine
+from app.engine.outcome import strategy_stats
 from app.engine.recommend import recommend
 from app.notify import wecom
 from app.strategy.registry import STRATEGIES
@@ -233,6 +234,12 @@ def api_signals():
     for s in db.list_signals():
         items.append({**dict(s), "name": _name_of(s["code"])})
     return {"items": items}
+
+
+@app.get("/api/signal_stats")
+def api_signal_stats():
+    """各策略近期战绩（已结算信号聚合），供信号中心展示与 AI 引用。"""
+    return {"items": strategy_stats()}
 
 
 @app.post("/api/signals/run")

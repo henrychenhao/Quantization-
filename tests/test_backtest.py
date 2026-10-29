@@ -111,3 +111,59 @@ def test_grid_multi_level_accumulates_then_exits():
     assert len(sells) == 1
     # 每档预算 = 20万 × 20% = 4万，单档股数应约为 40000/成交价（整手）
     assert all(b[3] % 100 == 0 for b in buys)
+
+# ---------- 样本外验证（walk-forward） ----------
+
+from app.backtest.engine import Result
+from app.backtest.report import walk_forward
+
+
+def _wf_result(n=100, up_days=70):
+    """前 up_days 天每日 +1%，其余每日 -0.5% 的净值序列。"""
+    dates = pd.bdate_range("2025-01-01", periods=n)
+    vals, v = [], 100000.0
+    for i in range(n):
+        if i < up_days:
+            v *= 1.01
+        else:
+            v *= 0.995
+        vals.append(v)
+    eq = pd.Series(vals, index=dates)
+    bm = pd.Series([100000.0] * n, index=dates)
+    return Result(code="600519", strategy="double_ma", start=dates[0], end=dates[-1],
+                  equity=eq, benchmark_equity=bm, trades=[])
+
+
+def test_walk_forward_split_points():
+    r = _wf_result(n=100, up_days=70)
+    wf = walk_forward(r, 100000.0, oos_ratio=0.3)
+    assert wf is not None
+    assert wf["in_days"] == 70
+    assert wf["oos_days"] == 31          # 含切点当日，保证连续
+    assert wf["cut_date"] == r.equity.index[69].strftime("%Y-%m-%d")
+    # 样本内收益 = 第 70 天净值 / 初始 - 1（>0）
+    assert wf["in_sample"]["total_return"] == pytest.approx(r.equity.iloc[69] / 100000 - 1, rel=1e-9)
+    # 样本外收益 = 期末 / 切点当日 - 1（<0）
+    assert wf["out_sample"]["total_return"] == pytest.approx(r.equity.iloc[-1] / r.equity.iloc[69] - 1, rel=1e-9)
+    assert wf["out_sample"]["total_return"] < 0
+    assert wf["return_decay"] > 0
+
+
+def test_walk_forward_short_series_none():
+    r = _wf_result(n=15, up_days=10)
+    assert walk_forward(r, 100000.0) is None
+
+
+def test_walk_forward_trades_segmented():
+    """成交按切分点归属：样本内/外笔数不重叠；回合胜率只统计段内配对。"""
+    r = _wf_result(n=100, up_days=70)
+    dates = r.equity.index
+    r.trades = [(dates[10], "buy", 10.0, 100),     # 样本内：未配对
+                (dates[75], "buy", 11.0, 100),     # 样本外：配对买入
+                (dates[80], "sell", 12.0, 100)]    # 样本外：配对卖出（赚）
+    wf = walk_forward(r, 100000.0)
+    assert wf["in_sample"]["n_trades"] == 1
+    assert wf["out_sample"]["n_trades"] == 2
+    assert wf["in_sample"]["rounds"] == 0        # 只有买入，未形成回合
+    assert wf["out_sample"]["rounds"] == 1
+    assert wf["out_sample"]["win_rate"] == 1.0   # 卖价 > 买价

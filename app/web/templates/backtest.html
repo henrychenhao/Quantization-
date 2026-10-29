@@ -163,6 +163,22 @@ function render(d, capital, code) {
       <td class="num">${fmtMoney(r.final_asset)}</td>
     </tr>`).join("");
 
+  const wfRows = d.rows.map(r => {
+    const wf = r.walk_forward;
+    if (!wf) return `<tr><td><strong>${r.name}</strong></td><td colspan="6" class="muted">区间不足 20 个交易日，无法切分</td></tr>`;
+    const ins = wf.in_sample, oos = wf.out_sample, decay = wf.return_decay;
+    const decayCls = decay > 0.1 ? "neg" : decay > 0 ? "" : "pos";
+    return `<tr>
+      <td><strong>${r.name}</strong></td>
+      <td class="num muted">${wf.cut_date}</td>
+      <td class="num ${ins.total_return >= 0 ? 'pos' : 'neg'}">${fmtPct(ins.total_return)}</td>
+      <td class="num ${oos.total_return >= 0 ? 'pos' : 'neg'}">${fmtPct(oos.total_return)}</td>
+      <td class="num neg">${fmtPct(oos.max_drawdown, false)}</td>
+      <td class="num">${fmtNum(oos.sharpe)}</td>
+      <td class="num ${decayCls}">${fmtPct(decay)}</td>
+    </tr>`;
+  }).join("");
+
   document.getElementById("result").innerHTML = `
     <div class="result-fade">
     ${stats}
@@ -178,6 +194,21 @@ function render(d, capital, code) {
             <th>夏普</th><th>胜率</th><th>交易笔数</th><th>期末资产</th>
           </tr></thead>
           <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <h2>样本外验证 <span class="tag" style="margin-left:6px">walk-forward 70/30</span></h2>
+        <span class="hint">前 70% 样本内、后 30% 样本外 · 样本外收益显著劣化 = 过拟合风险；衰减为负表示样本外反而更好</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>策略</th><th>切分点</th><th>样本内收益</th><th>样本外收益</th>
+            <th>样本外回撤</th><th>样本外夏普</th><th>收益衰减</th>
+          </tr></thead>
+          <tbody>${wfRows}</tbody>
         </table>
       </div>
     </div>

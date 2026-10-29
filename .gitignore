@@ -17,3 +17,4 @@ config.yaml
 # 系统
 .DS_Store
 *.swp
+.idea/

@@ -73,6 +73,9 @@ CREATE INDEX IF NOT EXISTS idx_signal_status ON signal(status);
 CREATE INDEX IF NOT EXISTS idx_signal_code ON signal(code);
 """
 
+# 信号质量结算列（ALTER TABLE 迁移添加）
+_OUTCOME_COLS = ["ret_1d", "ret_5d", "ret_20d", "settled_at"]
+
 
 @contextmanager
 def db():
@@ -104,6 +107,11 @@ def init_db() -> None:
                     FROM trade
                 ) WHERE id=1 AND initial_cash IS NULL
             """)
+        # 旧库迁移：signal 表补信号质量结算列
+        sig_cols = {r[1] for r in conn.execute("PRAGMA table_info(signal)")}
+        for col in _OUTCOME_COLS:
+            if col not in sig_cols:
+                conn.execute(f"ALTER TABLE signal ADD COLUMN {col} REAL")
 
 
 # ---------- watchlist ----------
@@ -171,11 +179,15 @@ def get_signal(sid: int) -> sqlite3.Row | None:
 
 
 def duplicate_today(code: str, strategy: str) -> bool:
-    """同一标的 × 同一策略当日是否已有未忽略信号（去重闸门）。"""
+    """同一标的 × 同一策略当日是否已有信号（去重闸门）。
+
+    包含「已忽略」的信号：用户当天忽略后不再重复推送（忽略即当日安静），
+    避免同一触发条件在盘中轮询/尾盘扫描中被反复打扰。
+    """
     with db() as conn:
         row = conn.execute(
             "SELECT 1 FROM signal WHERE code=? AND strategy=? "
-            "AND status!='ignored' AND date(created_at)=date('now','localtime') LIMIT 1",
+            "AND date(created_at)=date('now','localtime') LIMIT 1",
             (code, strategy),
         ).fetchone()
         return row is not None
@@ -185,6 +197,19 @@ def set_signal_status(sid: int, status: str) -> None:
     with db() as conn:
         conn.execute("UPDATE signal SET status=?, followed_at=datetime('now','localtime') WHERE id=?",
                      (status, sid))
+
+
+def set_signal_outcomes(sid: int, ret_1d: float | None, ret_5d: float | None,
+                        ret_20d: float | None, settled_at: str | None) -> None:
+    with db() as conn:
+        conn.execute("UPDATE signal SET ret_1d=?, ret_5d=?, ret_20d=?, settled_at=? WHERE id=?",
+                     (ret_1d, ret_5d, ret_20d, settled_at, sid))
+
+
+def unsettled_signals() -> list[sqlite3.Row]:
+    """已到期但尚未结算质量的信号（settled_at 为空）。"""
+    with db() as conn:
+        return conn.execute("SELECT * FROM signal WHERE settled_at IS NULL").fetchall()
 
 
 # ---------- trade / account ----------

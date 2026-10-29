@@ -17,6 +17,7 @@ from app.account import core as account
 from app.datasource.akshare_source import AkShareSource
 from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch
+from app.engine.outcome import strategy_stats
 from app.indicators import boll, donchian_high, donchian_low, ma, macd, rsi
 from app.strategy.registry import STRATEGIES
 
@@ -155,6 +156,12 @@ def portfolio_context() -> str:
         lines.append("【近期已处理信号】")
         for s in recent:
             lines.append(f"- {s['created_at']} {s['code']} {s['side']}（{s['strategy']}）→ {s['status']}：{(s['reason'] or '')[:50]}")
+    stats = strategy_stats()
+    if stats:
+        lines.append("【策略战绩】近20条已结算信号（命中=买入5日涨/卖出5日跌）：")
+        for st in stats:
+            lines.append(f"- {st['name']}：{st['count']} 条，胜率 {st['win_rate'] * 100:.0f}%，"
+                         f"平均 1/5/20 日 {_pct(st['avg_1d'])} / {_pct(st['avg_5d'])} / {_pct(st['avg_20d'])}")
     return "\n".join(lines)
 
 

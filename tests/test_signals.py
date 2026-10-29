@@ -23,8 +23,8 @@ def stub_network(monkeypatch):
     monkeypatch.setattr(engine.wecom, "init", lambda *a, **k: None)
 
 
-# 触发双均线金叉的行情：25 根横盘后大涨
-_KLINE = make_df([100.0] * 25 + [110.0])
+# 触发双均线金叉的行情：25 根横盘后拉升 +8%（避开 +10% 涨停闸门）
+_KLINE = make_df([100.0] * 25 + [108.0])
 
 
 def _seed_watchlist(code="600519", strategies=("double_ma",)):
@@ -60,7 +60,7 @@ def test_gate_dedup_skips_second_signal(seeded_account):
     engine.run_signals(CFG, dry_run=False)
     r = engine.run_signals(CFG, dry_run=False)
     assert len(r["generated"]) == 0
-    assert any("当日已有信号" in s["reason"] for s in r["skipped"])
+    assert any("当日已推送过" in s["reason"] for s in r["skipped"])
 
 
 def test_gate_bad_price_skipped(seeded_account, monkeypatch):
@@ -109,13 +109,75 @@ def test_disabled_watchlist_not_scanned(seeded_account):
     assert r["watch"] == 0
 
 
+# ---------- 涨跌停/停牌过滤 ----------
+
+def test_limit_up_blocks_buy_signal(seeded_account, monkeypatch):
+    # 主板股涨停（昨收 10 → 涨停 11）：买入信号被过滤
+    wid = _seed_watchlist(strategies=("double_ma",))
+    closes = [10.0] * 25 + [11.0]  # 大涨触发金叉 + 恰好涨停
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df(closes))
+    r = engine.run_signals(CFG, dry_run=True)
+    assert r["generated"] == []
+    assert any("涨停" in s["reason"] for s in r["skipped"])
+
+
+def test_limit_down_blocks_sell_signal(seeded_account, monkeypatch):
+    # 持有仓位 + 主板跌停（-10%）：死叉卖出信号被过滤
+    wid = _seed_watchlist(code="600519", strategies=("double_ma",))
+    db.add_trade(None, "600519", "buy", 100.0, 300, 5.0)
+    closes = [100.0] * 25 + [90.0]  # 大跌至跌停，MA5 下穿 MA20
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df(closes))
+    r = engine.run_signals(CFG, dry_run=True)
+    assert r["generated"] == []
+    assert any("跌停" in s["reason"] for s in r["skipped"])
+
+
+def test_etf_not_filtered_by_limit(seeded_account, monkeypatch):
+    # ETF 不做涨跌停强制过滤
+    wid = _seed_watchlist(code="513530", strategies=("double_ma",))
+    closes = [1.0] * 25 + [1.1]
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df(closes))
+    r = engine.run_signals(CFG, dry_run=True)
+    assert len(r["generated"]) == 1
+    assert not any("涨停" in s["reason"] for s in r["skipped"])
+
+
+def test_spot_limit_up_blocks_buy(seeded_account, monkeypatch):
+    # 盘中实时价涨停（昨收 50 → 实时 55，+10%）：唐奇安突破买入被过滤
+    wid = _seed_watchlist(code="600519", strategies=("donchian",))
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df([50.0] * 30))
+    monkeypatch.setattr(engine.AkShareSource, "get_spots", _spot_fake(55.0, 50.0))
+    r = engine.run_signals(CFG, dry_run=True, spot_mode=True)
+    assert r["generated"] == []
+    assert any("涨停" in s["reason"] for s in r["skipped"])
+
+
 # ---------- 盘中轮询（spot_mode） ----------
 
+def _spot_fake(price, prev_close=1.0):
+    """构造 get_spots 的替换方法：按调用时的 code 回填。"""
+    def _fake(self, codes):
+        code = codes[0] if codes else "600519"
+        return {code: {"name": "测试", "price": price, "prev_close": prev_close, "change_pct": 0.0}}
+    return _fake
+
+
 def test_spot_mode_uses_intraday_price(seeded_account, monkeypatch):
-    # 历史 30 根平稳，盘中实时价深跌 → 布林跌破下轨，信号价 = 实时价
+    # 历史 30 根平稳（qfq 昨收 50），盘中实时价深跌 → 跌破布林下轨，信号价 = 实时价
     wid = _seed_watchlist(strategies=("boll_mr",))
     monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df([50.0] * 30))
-    monkeypatch.setattr(engine.AkShareSource, "get_spot", lambda self, code: 40.0)
+    monkeypatch.setattr(engine.AkShareSource, "get_spots", _spot_fake(40.0, 50.0))
+    r = engine.run_signals(CFG, dry_run=True, spot_mode=True)
+    assert len(r["generated"]) == 1
+    assert r["generated"][0]["price"] == pytest.approx(40.0)
+
+
+def test_spot_mode_adjusts_for_dividend_adjustment(seeded_account, monkeypatch):
+    """复权口径统一：qfq 昨收 50，未复权昨收 100（10 送 10 后的口径差）→ 实时价应翻倍对齐。"""
+    wid = _seed_watchlist(strategies=("boll_mr",))
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df([50.0] * 30))
+    # 未复权昨收 100，实时价 80 → 折算 qfq 口径 = 80 × (50/100) = 40
+    monkeypatch.setattr(engine.AkShareSource, "get_spots", _spot_fake(80.0, 100.0))
     r = engine.run_signals(CFG, dry_run=True, spot_mode=True)
     assert len(r["generated"]) == 1
     assert r["generated"][0]["price"] == pytest.approx(40.0)
@@ -125,8 +187,18 @@ def test_spot_mode_suspended_price_skipped(seeded_account, monkeypatch):
     # 停牌/无实时价 → 跳过且不落库
     wid = _seed_watchlist(strategies=("boll_mr",))
     monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df([50.0] * 30))
-    monkeypatch.setattr(engine.AkShareSource, "get_spot", lambda self, code: 0.0)
+    monkeypatch.setattr(engine.AkShareSource, "get_spots", lambda self, codes: {})
     r = engine.run_signals(CFG, dry_run=False, spot_mode=True)
     assert r["generated"] == []
     assert any("实时价" in s["reason"] for s in r["skipped"])
     assert db.list_signals() == []
+
+def test_gate_dedup_ignored_counts(seeded_account):
+    """忽略即当日安静：被忽略的信号当天不再重复生成/推送。"""
+    _seed_watchlist()
+    r1 = engine.run_signals(CFG, dry_run=False)
+    assert len(r1["generated"]) == 1
+    db.set_signal_status(r1["generated"][0]["id"], "ignored")
+    r2 = engine.run_signals(CFG, dry_run=False)
+    assert r2["generated"] == []
+    assert any("当日已推送过" in s["reason"] for s in r2["skipped"])

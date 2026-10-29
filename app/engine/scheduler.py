@@ -98,7 +98,7 @@ def job_signal_scan(cfg: dict) -> None:
 
 
 def job_data_sync(cfg: dict) -> None:
-    """交易日 17:30：收盘后全量刷新自选标的 K 线（含未开启量化的）。"""
+    """交易日 17:30：收盘后全量刷新自选标的 K 线，并结算信号质量。"""
     if not is_trade_day():
         print("[sync] 非交易日，跳过")
         return
@@ -109,6 +109,17 @@ def job_data_sync(cfg: dict) -> None:
             print(f"[sync] {w['code']} K线刷新 {n} 根")
         except Exception as e:
             print(f"[sync] {w['code']} 刷新失败: {e}")
+    try:
+        from app.engine.outcome import settle_signal_outcomes
+        n = settle_signal_outcomes(cfg)
+        print(f"[sync] 信号质量结算更新 {n} 条")
+    except Exception as e:
+        print(f"[sync] 信号质量结算失败: {e}")
+    try:
+        from app.engine.backup import backup_data
+        backup_data(cfg)
+    except Exception as e:
+        print(f"[sync] 数据备份失败: {e}")
 
 
 def job_intraday(cfg: dict) -> None:

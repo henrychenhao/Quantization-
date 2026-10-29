@@ -19,6 +19,20 @@
   .sig-params b{font-family:var(--mono);color:var(--text);font-weight:650}
   .sig-reason{margin-top:7px;font-size:12px;color:var(--text-3);line-height:1.6}
   .sig-actions{display:flex;flex-direction:column;justify-content:center;gap:8px;padding:14px 16px;flex:none;border-left:1px solid var(--line-2);background:#FBFCFE}
+  /* 策略战绩 */
+  .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+  .stat-card{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--card)}
+  .stat-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px}
+  .stat-head .name{font-weight:650;font-size:13.5px}
+  .stat-win{font-family:var(--mono);font-size:12px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .stat-win.pos{background:rgba(229,72,77,.09);color:var(--up)}
+  .stat-win.neg{background:rgba(15,164,127,.09);color:var(--down)}
+  .stat-win.flat{background:var(--line-2);color:var(--text-3)}
+  .stat-rows{display:flex;flex-direction:column;gap:6px;font-size:12.5px}
+  .stat-row{display:flex;justify-content:space-between;align-items:baseline}
+  .stat-row span{color:var(--text-3)}
+  .stat-row b{font-family:var(--mono);font-weight:650;color:var(--text)}
+  .stat-row .num{font-family:var(--mono);font-weight:650}
 </style>
 
 <div class="page-head">
@@ -32,6 +46,14 @@
       去自选页扫描
     </a>
   </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>策略战绩 <span class="tag" style="margin-left:6px">近 20 条已结算信号</span></h2>
+    <span class="hint">命中 = 买入信号 5 日后上涨 / 卖出信号 5 日后下跌 · 每日收盘数据同步后自动结算</span>
+  </div>
+  <div id="stats-grid"></div>
 </div>
 
 <div class="card">
@@ -68,6 +90,37 @@
 const STATUS_TXT = { pending: "待处理", followed: "已跟随", ignored: "已忽略" };
 const SNAME = {{ strategies|tojson }};
 const sname = c => (SNAME.find(s => s.code === c) || {}).name || c;
+
+/* 策略战绩卡 */
+function loadStats() {
+  api("/api/signal_stats").then(d => {
+    const el = document.getElementById("stats-grid");
+    const items = d.items || [];
+    el.innerHTML = items.length ? items.map(s => {
+      const wr = (s.win_rate || 0) * 100;
+      const wrCls = wr >= 50 ? "pos" : wr > 0 ? "neg" : "flat";
+      const pct = v => v === null || v === undefined
+        ? "<span class=muted>—</span>"
+        : `<span class="num ${v >= 0 ? "pos" : "neg"}">${fmtPct(v)}</span>`;
+      return `<div class="stat-card">
+        <div class="stat-head">
+          <span class="name">${s.name}</span>
+          <span class="stat-win ${wrCls}">${wr.toFixed(0)}% 胜率</span>
+        </div>
+        <div class="stat-rows">
+          <div class="stat-row"><span>样本</span><b>${s.count} 条</b></div>
+          <div class="stat-row"><span>平均 1 日</span>${pct(s.avg_1d)}</div>
+          <div class="stat-row"><span>平均 5 日</span>${pct(s.avg_5d)}</div>
+          <div class="stat-row"><span>平均 20 日</span>${pct(s.avg_20d)}</div>
+        </div>
+      </div>`;
+    }).join("") : `<div class="empty" style="border:none">
+      <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+      <div class="t">暂无已结算信号</div>
+      <div class="d">信号发出后次日起，每日收盘数据同步时自动结算 1 / 5 / 20 日表现</div>
+    </div>`;
+  }).catch(e => toast(e.message, "err"));
+}
 
 function load() {
   api("/api/signals").then(d => {
@@ -162,5 +215,6 @@ async function ignore(id) {
 }
 
 load();
+loadStats();
 </script>
 {% endblock %}
