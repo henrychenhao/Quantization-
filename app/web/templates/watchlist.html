@@ -85,9 +85,10 @@ function loadWatchlist() {
           <span class="track"></span><span class="knob"></span>
         </label>
       </td>
-      <td style="text-align:left;white-space:normal"><div class="tag-row">${(w.strategies || []).map(s => `<span class="tag blue" title="${s}">${sname(s)}</span>`).join("") || '<span class="muted">未绑定</span>'}</div></td>
+      <td style="text-align:left;white-space:normal"><div class="tag-row">${(w.strategies || []).map(s => `<span class="tag blue" title="${s}">${sname(s)}</span>`).join("") || '<span class="muted">未绑定</span>'}${w.industry ? `<span class="tag" title="所属行业（AI 板块联动）">${w.industry}</span>` : ""}</div></td>
       <td class="num">${w.shares || "—"}</td>
       <td style="text-align:right">
+        ${w.is_etf ? "" : `<button class="btn ghost sm" onclick='editIndustry(${w.id}, ${JSON.stringify(w.industry || "").replace(/'/g, "&#39;")})'>行业</button>`}
         <button class="btn ghost sm" onclick='editStrategies(${w.id}, ${JSON.stringify(w.strategies || []).replace(/'/g, "&#39;")})'>策略</button>
         <button class="btn brand-ghost sm" onclick="rec(${w.id}, '${w.code}')">推荐</button>
         <button class="btn danger sm" onclick="del(${w.id})">移除</button>
@@ -123,6 +124,41 @@ setInterval(refreshQuotes, 15000);
 async function toggle(id) {
   try { await api(`/api/watchlist/${id}/toggle`, "POST"); loadWatchlist(); }
   catch (e) { toast(e.message, "err"); }
+}
+
+/* 设置所属行业（AI 板块联动）：下拉选择同花顺行业，可清空 */
+let INDUSTRIES = null;
+async function editIndustry(wid, current) {
+  if (INDUSTRIES === null) {
+    try { INDUSTRIES = (await api("/api/industries")).items || []; }
+    catch (e) { INDUSTRIES = []; }
+  }
+  const opts = [`<option value="">未设置</option>`]
+    .concat(INDUSTRIES.map(n => `<option value="${n}" ${n === current ? "selected" : ""}>${n}</option>`))
+    .join("");
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">设置所属行业
+        <div class="sub">AI 分析时将对比行业指数近 5/20 日表现，判断个股与板块强弱</div>
+      </div>
+      <div class="modal-body">
+        <div class="field"><label>所属行业</label><select class="input" id="ei-industry">${opts}</select></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn primary" id="ei-submit">保存</button>
+      </div>
+    </div>`, () => {
+      document.getElementById("ei-submit").addEventListener("click", async () => {
+        const industry = document.getElementById("ei-industry").value;
+        try {
+          await api(`/api/watchlist/${wid}/industry`, "POST", { industry });
+          closeModal();
+          toast(industry ? `已设置行业：${industry}` : "已清空行业设置");
+          loadWatchlist();
+        } catch (e) { toast(e.message, "err"); }
+      });
+    });
 }
 
 /* 编辑绑定策略：弹窗勾选策略，保存即覆盖当前绑定 */

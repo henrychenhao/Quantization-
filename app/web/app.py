@@ -17,7 +17,9 @@ from app.account import core as account
 from app.backtest.engine import Fees, run_backtest
 from app.backtest.report import compute_metrics
 from app.config import load_config
+from app.datasource import sector
 from app.datasource.akshare_source import AkShareSource
+from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch
 from app.engine import signals as signal_engine
 from app.engine.outcome import strategy_stats
@@ -144,6 +146,8 @@ def api_watchlist():
         "id": w["id"], "code": w["code"], "name": w["name"],
         "quant_enabled": bool(w["quant_enabled"]),
         "strategies": json.loads(w["strategies"] or "[]"),
+        "industry": w["industry"] or "",
+        "is_etf": is_etf(w["code"]),
         "shares": pos.get(w["code"], {}).get("shares"),
     } for w in db.list_watchlist()]
     return {"items": items}
@@ -210,6 +214,25 @@ def api_watch_strategies(wid: int, body: ApplyStrategies):
         return JSONResponse(status_code=404, content={"error": "自选不存在"})
     db.update_watchlist(wid, strategies=body.strategies)
     return {"ok": True, "strategies": body.strategies}
+
+
+class SetIndustry(BaseModel):
+    industry: str = ""
+
+
+@app.post("/api/watchlist/{wid}/industry")
+def api_watch_industry(wid: int, body: SetIndustry):
+    """设置所属行业（AI 板块联动用，可空）。"""
+    if _watch_row(wid) is None:
+        return JSONResponse(status_code=404, content={"error": "自选不存在"})
+    db.update_watchlist(wid, industry=body.industry.strip())
+    return {"ok": True, "industry": body.industry.strip()}
+
+
+@app.get("/api/industries")
+def api_industries():
+    """同花顺行业名单（约 90 个），供自选页选择所属行业。"""
+    return {"items": sector.get_industries()}
 
 
 @app.get("/api/recommend")

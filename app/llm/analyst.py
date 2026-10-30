@@ -63,6 +63,50 @@ def _account_ctx_for(code: str) -> dict:
     }
 
 
+def _volume_ctx(df) -> str:
+    """量能上下文（纯本地计算，零网络）：量比 / 均量对比 / 连续量能 / 量价配合。
+
+    只用相对值（比值、天数、状态），不展示绝对手数，避免数据源单位差异。
+    """
+    vol, close = df["volume"], df["close"]
+    if len(vol) < 25 or float(vol.tail(20).mean()) <= 0:
+        return ""
+    ma20 = float(vol.tail(20).mean())
+    # 量比：今日量 / 前 5 日均量（不含今日）
+    ma5_prev = float(vol.iloc[-6:-1].mean())
+    ratio = float(vol.iloc[-1]) / ma5_prev if ma5_prev > 0 else None
+    # 近 5 日均量 vs 20 日均量
+    amp = float(vol.tail(5).mean()) / ma20
+    amp_txt = "放量" if amp > 1.15 else ("缩量" if amp < 0.85 else "持平")
+    # 连续高于 20 日均量的天数（从最新往回）
+    n_hot = 0
+    for v in reversed(vol.tolist()):
+        if v > ma20:
+            n_hot += 1
+        else:
+            break
+    # 近 5 日量价配合：涨放量/跌缩量 = 健康；涨缩量/跌放量 = 背离
+    up_hot = up_cold = dn_hot = dn_cold = 0
+    for i in range(len(df) - 5, len(df)):
+        chg = float(close.iloc[i]) - float(close.iloc[i - 1])
+        hot = float(vol.iloc[i]) > ma20
+        if chg >= 0:
+            up_hot += hot; up_cold += (not hot)
+        else:
+            dn_hot += hot; dn_cold += (not hot)
+    if (up_hot + dn_cold) >= (up_cold + dn_hot):
+        vp_txt = "量价配合健康（涨放量、跌缩量）"
+    else:
+        vp_txt = "量价背离（涨缩量或跌放量，动能存疑）"
+    parts = []
+    if ratio is not None:
+        parts.append(f"今日量比 {ratio:.2f}")
+    parts.append(f"近5日均量为20日均量的 {amp:.0%}（{amp_txt}）")
+    parts.append(f"连续 {n_hot} 日高于20日均量")
+    parts.append(f"近5日：涨放量{up_hot}/涨缩量{up_cold}/跌放量{dn_hot}/跌缩量{dn_cold}，{vp_txt}")
+    return "【量能】" + "；".join(parts)
+
+
 def stock_context(code: str, cfg: dict) -> str:
     """个股诊断上下文：行情摘要 + 指标读数 + 六策略触发状态 + 持仓。"""
     source = AkShareSource()
@@ -104,6 +148,44 @@ def stock_context(code: str, cfg: dict) -> str:
     lines.append(
         f"【通道】20日唐奇安上轨 {_fmt(dhi.iloc[-1])}（{'已突破' if last > dhi.iloc[-1] else '未突破'}）；"
         f"10日下轨 {_fmt(dlo.iloc[-1])}（{'已跌破' if last < dlo.iloc[-1] else '未跌破'}）")
+    vol_line = _volume_ctx(df)
+    if vol_line:
+        lines.append(vol_line)
+
+    # 腾讯快照：五档盘口压力 + 个股基本面（ETF 无 PE/PB 概念，跳过基本面）
+    try:
+        from app.datasource.tencent import get_quotes
+        snap = get_quotes([code]).get(code)
+    except Exception:
+        snap = None
+    if snap and snap["price"] > 0:
+        if snap["bid_vol"] + snap["ask_vol"] > 0:
+            pressure = snap["bid_vol"] / snap["ask_vol"] if snap["ask_vol"] > 0 else 99.0
+            lines.append(
+                f"【盘口】五档挂单：买盘 {snap['bid_vol']:,.0f} 手 vs 卖盘 {snap['ask_vol']:,.0f} 手"
+                f"（买/卖挂单比 {pressure:.2f}；盘中快照，收盘后挂单可能残留）")
+        if not is_etf(code) and (snap["pe"] > 0 or snap["pb"] > 0):
+            lines.append(
+                f"【基本面】PE(TTM) {snap['pe']:.1f}，PB {snap['pb']:.2f}，"
+                f"总市值 {snap['mktcap']:,.0f} 亿，换手率 {snap['turnover']:.2f}%，量比 {snap['vol_ratio']:.2f}")
+
+    # 板块联动：自选页配置了行业才有（个股 vs 行业指数强弱）
+    industry = ((w["industry"] if w else "") or "").strip()
+    if industry and not is_etf(code):
+        try:
+            from app.datasource.sector import industry_perf
+            perf = industry_perf(industry)
+        except Exception:
+            perf = None
+        if perf:
+            ind5, ind20 = perf.get("ret_5d"), perf.get("ret_20d")
+            stock5, stock20 = window_pct(5), window_pct(20)
+            rel = ""
+            if ind5 is not None and stock5 is not None:
+                rel = "，强于行业" if stock5 > ind5 else "，弱于行业"
+            lines.append(
+                f"【板块】所属行业「{industry}」：行业指数近5日 {_pct(ind5)}、近20日 {_pct(ind20)}；"
+                f"个股近5日 {_pct(stock5)}{rel}")
 
     # 六策略当前触发状态（与信号引擎同构）
     ctx = _account_ctx_for(code)

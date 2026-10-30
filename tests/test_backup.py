@@ -1,14 +1,24 @@
 """数据备份测试：目录结构 / 数据库一致性 / 保留策略清理。
 
 备份根目录 monkeypatch 到临时目录，绝不触碰真实 data/backup。
+日期全部相对今天动态生成，避免跨天运行脆断。
 """
 import os
 import sqlite3
+from datetime import datetime, timedelta
 
 from app import db
 from app.engine import backup as backup_mod
 
 CFG = {"data": {"kline_dir": "data/kline"}}
+
+
+def _today() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def _past(days: int) -> str:
+    return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
 
 def test_backup_creates_snapshot(tmp_path, monkeypatch):
@@ -31,15 +41,15 @@ def test_backup_creates_snapshot(tmp_path, monkeypatch):
 
 
 def test_backup_keeps_recent_only(tmp_path, monkeypatch):
-    """今天+昨天往前共 6 个日期目录，keep=5 → 只清最早 1 个。"""
+    """今天 + 过去 6~2 天共 6 个日期目录，keep=5 → 只清最早 1 个。"""
     monkeypatch.setattr(backup_mod, "BACKUP_ROOT", str(tmp_path))
-    for d in ("2026-10-24", "2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28"):
+    days = [_past(i) for i in (6, 5, 4, 3, 2)]
+    for d in days:
         os.makedirs(os.path.join(str(tmp_path), d))
     r = backup_mod.backup_data(CFG, keep=5)
     remain = sorted(x for x in os.listdir(str(tmp_path)) if len(x) == 10)
-    assert remain == ["2026-10-25", "2026-10-26", "2026-10-27", "2026-10-28",
-                      "2026-10-29"]
-    assert r["cleaned"] == ["2026-10-24"]
+    assert remain == sorted(days[1:] + [_today()])
+    assert r["cleaned"] == [days[0]]
 
 
 def test_backup_same_day_idempotent(tmp_path, monkeypatch):
@@ -55,8 +65,8 @@ def test_cleanup_skips_non_date_dirs(tmp_path, monkeypatch):
     """非日期命名的目录不参与清理（避免误删）；keep=1 时只留今天。"""
     monkeypatch.setattr(backup_mod, "BACKUP_ROOT", str(tmp_path))
     os.makedirs(os.path.join(str(tmp_path), "README"))
-    for d in ("2026-10-20", "2026-10-21"):
+    for d in (_past(9), _past(8)):
         os.makedirs(os.path.join(str(tmp_path), d))
     backup_mod.backup_data(CFG, keep=1)
     assert os.path.isdir(os.path.join(str(tmp_path), "README"))
-    assert sorted(x for x in os.listdir(str(tmp_path)) if len(x) == 10) == ["2026-10-29"]
+    assert sorted(x for x in os.listdir(str(tmp_path)) if len(x) == 10) == [_today()]

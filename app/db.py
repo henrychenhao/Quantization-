@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS watchlist (
     name TEXT,
     quant_enabled INTEGER DEFAULT 1,
     strategies TEXT DEFAULT '[]',
+    industry TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS signal (
@@ -112,6 +113,10 @@ def init_db() -> None:
         for col in _OUTCOME_COLS:
             if col not in sig_cols:
                 conn.execute(f"ALTER TABLE signal ADD COLUMN {col} REAL")
+        # 旧库迁移：watchlist 表补 industry 列（AI 板块联动配置，可空）
+        wl_cols = {r[1] for r in conn.execute("PRAGMA table_info(watchlist)")}
+        if "industry" not in wl_cols:
+            conn.execute("ALTER TABLE watchlist ADD COLUMN industry TEXT DEFAULT ''")
 
 
 # ---------- watchlist ----------
