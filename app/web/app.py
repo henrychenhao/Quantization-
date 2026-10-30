@@ -17,7 +17,7 @@ from app.account import core as account
 from app.backtest.engine import Fees, run_backtest
 from app.backtest.report import compute_metrics
 from app.config import load_config
-from app.datasource import sector
+from app.datasource import industry_map, sector
 from app.datasource.akshare_source import AkShareSource
 from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch
@@ -233,6 +233,51 @@ def api_watch_industry(wid: int, body: SetIndustry):
 def api_industries():
     """同花顺行业名单（约 90 个），供自选页选择所属行业。"""
     return {"items": sector.get_industries()}
+
+
+@app.post("/api/watchlist/{wid}/auto_industry")
+def api_watch_auto_industry(wid: int):
+    """单只自动识别所属行业（同花顺成分映射）。
+
+    映射缓存缺失时自动构建一次（约 30 秒）；识别失败（ETF/新股）返回 400。
+    """
+    row = _watch_row(wid)
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "自选不存在"})
+    industry = industry_map.detect_industry(row["code"])
+    if industry is None and not industry_map.map_status()["built"]:
+        m = industry_map.build_map()
+        industry = m.get(row["code"])
+    if industry is None:
+        return JSONResponse(status_code=400,
+                            content={"error": f"未能识别 {row['code']} 的行业（ETF 无行业概念或不在映射中）"})
+    db.update_watchlist(wid, industry=industry)
+    return {"ok": True, "industry": industry}
+
+
+@app.post("/api/industries/auto_all")
+def api_industries_auto_all():
+    """构建/加载全市场行业映射，并覆盖式回填全部非 ETF 自选的行业。
+
+    幂等：映射已构建时直接复用（秒回）；force 重抓约 30 秒。
+    """
+    m = industry_map.build_map()
+    if not m:
+        return JSONResponse(status_code=503,
+                            content={"error": "行业映射构建失败（行业名单接口不可用），请稍后重试"})
+    updated, unknown = [], []
+    for w in db.list_watchlist():
+        if is_etf(w["code"]):
+            continue
+        ind = m.get(w["code"])
+        if ind:
+            if (w["industry"] or "") != ind:
+                db.update_watchlist(w["id"], industry=ind)
+            updated.append({"code": w["code"], "name": w["name"], "industry": ind})
+        else:
+            unknown.append(w["code"])
+    return {"ok": True, "stocks": len(m), "detected": len(updated),
+            "items": updated, "unknown": unknown}
 
 
 @app.get("/api/recommend")

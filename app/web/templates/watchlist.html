@@ -34,6 +34,7 @@
   <div class="card-head">
     <h2>监控列表</h2>
     <span class="hint" id="run-result">扫描结果会显示在这里</span>
+    <button class="btn ghost sm" id="btn-auto-industry" onclick="autoAllIndustry()">自动识别全部行业</button>
   </div>
   <div class="table-wrap">
     <table>
@@ -145,10 +146,27 @@ async function editIndustry(wid, current) {
         <div class="field"><label>所属行业</label><select class="input" id="ei-industry">${opts}</select></div>
       </div>
       <div class="modal-foot">
+        <button class="btn ghost" id="ei-auto">自动识别</button>
+        <span style="flex:1"></span>
         <button class="btn" onclick="closeModal()">取消</button>
         <button class="btn primary" id="ei-submit">保存</button>
       </div>
     </div>`, () => {
+      document.getElementById("ei-auto").addEventListener("click", async () => {
+        const btn = document.getElementById("ei-auto");
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> 识别中…';
+        try {
+          const d = await api(`/api/watchlist/${wid}/auto_industry`, "POST");
+          document.getElementById("ei-industry").value = d.industry;
+          toast(`识别成功：${d.industry}（点击保存生效）`);
+          btn.innerHTML = "重新识别";
+        } catch (e) {
+          toast(e.message, "err");
+          btn.innerHTML = "自动识别";
+        }
+        btn.disabled = false;
+      });
       document.getElementById("ei-submit").addEventListener("click", async () => {
         const industry = document.getElementById("ei-industry").value;
         try {
@@ -159,6 +177,23 @@ async function editIndustry(wid, current) {
         } catch (e) { toast(e.message, "err"); }
       });
     });
+}
+
+/* 一键识别全部自选行业：同花顺全市场映射，覆盖式回填（首次构建约 30 秒） */
+async function autoAllIndustry() {
+  if (!confirm("将从同花顺自动识别全部个股的行业并覆盖现有设置（ETF 无行业概念自动跳过）。首次可能耗时约半分钟，是否继续？")) return;
+  const btn = document.getElementById("btn-auto-industry");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> 识别中…';
+  try {
+    const d = await api("/api/industries/auto_all", "POST");
+    const msg = [`识别 ${d.detected} 只、覆盖 ${d.stocks} 只全市场映射`];
+    if (d.unknown && d.unknown.length) msg.push(`未能识别：${d.unknown.join("、")}（可手动设置）`);
+    toast(msg.join("；"));
+  } catch (e) { toast(e.message, "err"); }
+  btn.disabled = false;
+  btn.innerHTML = "自动识别全部行业";
+  loadWatchlist();
 }
 
 /* 编辑绑定策略：弹窗勾选策略，保存即覆盖当前绑定 */
