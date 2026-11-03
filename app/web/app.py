@@ -606,13 +606,14 @@ def api_strategy_custom_del(code: str):
 # ---------- API: AI 分析 ----------
 
 class AIChatReq(BaseModel):
-    messages: list[dict]        # [{"role": "user"|"assistant", "content": "..."}]
-    code: str | None = None    # 当前选中的诊断标的（注入个股上下文）
+    session_id: int | None = None   # 会话 id；为空自动新建
+    content: str                    # 本轮用户输入
+    code: str | None = None         # 当前选中的诊断标的（注入个股上下文）
 
 
 @app.post("/api/ai/chat")
 def api_ai_chat(body: AIChatReq):
-    """AI 对话：注入本地数据上下文后调用 DeepSeek，SSE 流式返回。"""
+    """AI 对话（会话持久化）：历史存库、首轮 system 服务端重建，SSE 流式返回。"""
     from app.llm.client import LLMClient, LLMNotConfigured
     from app.llm import analyst
 
@@ -621,24 +622,62 @@ def api_ai_chat(body: AIChatReq):
     except LLMNotConfigured as e:
         return JSONResponse(status_code=400, content={"error": str(e)})
 
+    content = (body.content or "").strip()
+    if not content:
+        return JSONResponse(status_code=400, content={"error": "内容不能为空"})
+
+    # 会话：无 id 自动新建；首条消息回填会话标题
+    sid = body.session_id if body.session_id is not None else db.create_ai_session()
+    db.add_ai_message(sid, "user", content)
+    sess = {s["id"]: s for s in db.list_ai_sessions(100)}.get(sid)
+    if sess and not sess["title"]:
+        db.update_ai_session_title(sid, content[:24])
+
+    # 组装上下文：重建的 system（保证数据最新）+ 最近 12 条历史（含本轮 user）
     try:
         sys_prompt = analyst.system_prompt(body.code, cfg)
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"分析上下文构建失败：{e}"})
-
-    # 多轮记忆：保留最近 12 条，首轮 system 由服务端重建（保证数据最新）
-    msgs = [{"role": "system", "content": sys_prompt}] + (body.messages or [])[-12:]
+    hist = db.list_ai_messages(sid, limit=12)
+    msgs = [{"role": "system", "content": sys_prompt}] + \
+           [{"role": m["role"], "content": m["content"]} for m in hist]
 
     def gen():
         try:
+            answer = ""
             for chunk in client.stream_chat(msgs):
+                answer += chunk
                 yield f"data: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
+            db.add_ai_message(sid, "assistant", answer or "（模型未返回内容）")
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)}, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# ---------- API: AI 会话管理 ----------
+
+@app.get("/api/ai/sessions")
+def api_ai_sessions():
+    return {"items": [dict(s) for s in db.list_ai_sessions()]}
+
+
+@app.post("/api/ai/sessions")
+def api_ai_session_new():
+    return {"id": db.create_ai_session()}
+
+
+@app.get("/api/ai/sessions/{sid}/messages")
+def api_ai_session_messages(sid: int):
+    return {"items": [dict(m) for m in db.list_ai_messages(sid)]}
+
+
+@app.delete("/api/ai/sessions/{sid}")
+def api_ai_session_del(sid: int):
+    db.delete_ai_session(sid)
+    return {"ok": True}
 
 
 # ---------- helpers ----------

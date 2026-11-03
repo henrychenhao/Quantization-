@@ -82,8 +82,22 @@ CREATE TABLE IF NOT EXISTS strategy_custom (
     params TEXT NOT NULL DEFAULT '{}',
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS ai_session (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS ai_message (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES ai_session(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
 CREATE INDEX IF NOT EXISTS idx_signal_status ON signal(status);
 CREATE INDEX IF NOT EXISTS idx_signal_code ON signal(code);
+CREATE INDEX IF NOT EXISTS idx_ai_msg_session ON ai_message(session_id);
 """
 
 # 信号质量结算列（ALTER TABLE 迁移添加）
@@ -408,3 +422,56 @@ def log_push(channel: str, title: str, content: str, status: str) -> None:
     with db() as conn:
         conn.execute("INSERT INTO push_log(channel,title,content,status) VALUES(?,?,?,?)",
                      (channel, title, content, status))
+
+# ---------- AI 会话（对话持久化） ----------
+
+def create_ai_session(title: str = "") -> int:
+    """新建一个 AI 会话，返回 id。"""
+    with db() as conn:
+        cur = conn.execute("INSERT INTO ai_session(title) VALUES(?)", (title,))
+        return cur.lastrowid
+
+
+def list_ai_sessions(limit: int = 50) -> list[sqlite3.Row]:
+    """会话列表（含消息条数），按最近更新排序。"""
+    with db() as conn:
+        return conn.execute(
+            "SELECT s.id, s.title, s.created_at, s.updated_at, "
+            " (SELECT COUNT(*) FROM ai_message m WHERE m.session_id=s.id) AS msg_count "
+            "FROM ai_session s ORDER BY s.updated_at DESC LIMIT ?", (limit,)).fetchall()
+
+
+def update_ai_session_title(sid: int, title: str) -> None:
+    with db() as conn:
+        conn.execute("UPDATE ai_session SET title=? WHERE id=?", (title, sid))
+
+
+def bump_ai_session(sid: int) -> None:
+    with db() as conn:
+        conn.execute("UPDATE ai_session SET updated_at=datetime('now','localtime') WHERE id=?", (sid,))
+
+
+def list_ai_messages(sid: int, limit: int | None = None) -> list[sqlite3.Row]:
+    """某会话的全部消息（旧→新）。limit 截取最近 N 条。"""
+    with db() as conn:
+        if limit:
+            return conn.execute(
+                "SELECT * FROM (SELECT * FROM ai_message WHERE session_id=? ORDER BY id DESC LIMIT ?) "
+                "ORDER BY id", (sid, limit)).fetchall()
+        return conn.execute(
+            "SELECT * FROM ai_message WHERE session_id=? ORDER BY id", (sid,)).fetchall()
+
+
+def add_ai_message(sid: int, role: str, content: str) -> None:
+    """追加一条消息并刷新会话更新时间。"""
+    with db() as conn:
+        conn.execute("INSERT INTO ai_message(session_id, role, content) VALUES(?,?,?)",
+                     (sid, role, content))
+        conn.execute("UPDATE ai_session SET updated_at=datetime('now','localtime') WHERE id=?", (sid,))
+
+
+def delete_ai_session(sid: int) -> None:
+    """删除会话及其全部消息。"""
+    with db() as conn:
+        conn.execute("DELETE FROM ai_message WHERE session_id=?", (sid,))
+        conn.execute("DELETE FROM ai_session WHERE id=?", (sid,))

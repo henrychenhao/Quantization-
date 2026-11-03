@@ -49,6 +49,18 @@
   .watch-pick:hover{background:#F6F8FC}
   .watch-pick.active{background:var(--brand-soft);border-color:#C2D6FF;color:var(--brand-dark);font-weight:600}
   .watch-pick .c{font-family:var(--mono)}
+  /* 历史会话列表 */
+  .sess{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:8px;
+    cursor:pointer;border:1px solid transparent;margin-bottom:4px}
+  .sess:hover{background:#F6F8FC}
+  .sess.active{background:var(--brand-soft);border-color:#C2D6FF}
+  .sess .t{flex:1;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sess.active .t{color:var(--brand-dark);font-weight:600}
+  .sess .m{font-size:10.5px;color:var(--text-3);flex:none}
+  .sess .sess-del{flex:none;border:none;background:none;color:var(--text-3);cursor:pointer;
+    font-size:12px;line-height:1;padding:2px 4px;border-radius:4px}
+  .sess .sess-del:hover{background:#FDECEC;color:var(--up)}
+  .sess-empty{padding:20px 10px;text-align:center;color:var(--text-3);font-size:12px}
   .ai-banner{
     background:#FFF8EC;border:1px solid #F5DFB2;color:#8A5A00;border-radius:10px;
     padding:11px 14px;font-size:12.5px;line-height:1.7;margin-bottom:14px;
@@ -98,6 +110,13 @@
 
   <div class="ai-side">
     <div class="card">
+      <div class="card-head" style="margin-bottom:10px">
+        <h2>历史会话</h2>
+        <button class="btn sm brand-ghost" onclick="newSession()">＋ 新对话</button>
+      </div>
+      <div id="session-list" style="max-height:230px;overflow-y:auto"></div>
+    </div>
+    <div class="card">
       <div class="card-head" style="margin-bottom:12px"><h2>快捷指令</h2></div>
       <button class="quick-btn" onclick="quick('请诊断该标的的技术面：趋势结构、指标读数、六策略触发状态，并给出风险提示。')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
@@ -134,7 +153,7 @@
 <script>
 const WATCH = {{ watchlist|tojson }};
 let pickedCode = null;
-let history = [];      // [{role, content}]
+let curSession = null;      // 当前会话 id（null=尚未建立，发送时自动创建）
 let busy = false;
 
 const msgsEl = document.getElementById("msgs");
@@ -187,14 +206,13 @@ async function send(text) {
   sendBtn.disabled = true;
   addUser(text);
   const bubble = addAssistant();
-
-  history.push({ role: "user", content: text });
+  if (!curSession) curSession = (await api("/api/ai/sessions", "POST")).id;
 
   try {
     const resp = await fetch("/api/ai/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages: history.slice(0, -1).concat([{ role: "user", content: text }]), code: pickedCode }),
+      body: JSON.stringify({ session_id: curSession, content: text, code: pickedCode }),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: "请求失败" }));
@@ -225,7 +243,7 @@ async function send(text) {
     }
     bubble.innerHTML = "";
     bubble.textContent = answer || "（模型未返回内容）";
-    history.push({ role: "assistant", content: answer });
+    loadSessions();   // 标题/排序可能已更新
   } catch (e) {
     bubble.innerHTML = "";
     bubble.textContent = "分析失败：" + e.message;
@@ -236,6 +254,77 @@ async function send(text) {
     ta.focus();
     scrollBottom();
   }
+}
+
+/* ---------- 历史会话管理 ---------- */
+const escapeHtml = s => (s || "").replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const EMPTY_HTML = `
+  <div class="ai-empty" id="ai-empty">
+    <div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.8a2 2 0 0 0 1.3 1.3L21 12l-5.8 1.9a2 2 0 0 0-1.3 1.3L12 21l-1.9-5.8a2 2 0 0 0-1.3-1.3L3 12l5.8-1.9a2 2 0 0 0 1.3-1.3L12 3z"/></svg></div>
+    <div>试试问我：</div>
+    <div>「诊断一下 盟升科技 的技术面」 · 「复盘我的持仓」 · 「解读最新的网格信号」 · 「网格策略和多均线有什么区别」</div>
+  </div>`;
+
+function renderMsgs(msgs) {
+  const box = document.getElementById("msgs");
+  box.innerHTML = "";
+  if (!msgs || !msgs.length) { box.innerHTML = EMPTY_HTML; return; }
+  for (const m of msgs) {
+    const div = document.createElement("div");
+    if (m.role === "user") {
+      div.className = "msg user";
+      div.innerHTML = `<div class="avatar">我</div><div class="bubble"></div>`;
+      div.querySelector(".bubble").textContent = m.content;
+    } else {
+      div.className = "msg assistant";
+      div.innerHTML = `<div class="avatar">AI</div><div class="bubble"></div>`;
+      div.querySelector(".bubble").textContent = m.content;
+    }
+    box.appendChild(div);
+  }
+  scrollBottom();
+}
+
+async function loadSessions() {
+  try {
+    const d = await api("/api/ai/sessions");
+    document.getElementById("session-list").innerHTML = d.items.map(s => `
+      <div class="sess ${s.id === curSession ? "active" : ""}" onclick="openSession(${s.id})">
+        <span class="t">${escapeHtml(s.title) || "未命名对话"}</span>
+        <span class="m">${s.msg_count} 条</span>
+        <button class="sess-del" onclick="event.stopPropagation();delSession(${s.id})" title="删除会话">✕</button>
+      </div>`).join("") || `<div class="sess-empty">暂无历史会话</div>`;
+  } catch (e) { /* 静默 */ }
+}
+
+async function openSession(sid) {
+  if (busy) return;
+  curSession = sid;
+  try {
+    const d = await api(`/api/ai/sessions/${sid}/messages`);
+    renderMsgs(d.items);
+  } catch (e) { toast(e.message, "err"); }
+  loadSessions();
+}
+
+async function newSession() {
+  if (busy) return;
+  const d = await api("/api/ai/sessions", "POST");
+  curSession = d.id;
+  renderMsgs([]);
+  loadSessions();
+}
+
+async function delSession(sid) {
+  if (busy) return;
+  if (!confirm("删除该会话？其对话记录将不可恢复")) return;
+  try {
+    await api(`/api/ai/sessions/${sid}`, "DELETE");
+    if (sid === curSession) { curSession = null; await newSession(); }
+    else loadSessions();
+  } catch (e) { toast(e.message, "err"); }
 }
 
 sendBtn.addEventListener("click", () => send());
@@ -253,5 +342,14 @@ if (urlCode && WATCH.some(w => w.code === urlCode)) {
   const el = document.querySelector(`.watch-pick[data-code="${urlCode}"]`);
   if (el) pickCode(urlCode, el);
 }
+
+/* 初始化：恢复最近会话，无则新建 */
+(async () => {
+  try {
+    const d = await api("/api/ai/sessions");
+    if (d.items.length) openSession(d.items[0].id);
+    else await newSession();
+  } catch (e) { await newSession(); }
+})();
 </script>
 {% endblock %}
