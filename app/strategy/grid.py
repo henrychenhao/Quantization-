@@ -9,7 +9,8 @@
 - 买入：持有档数 < n_levels 且现价 <= 锚点 × (1 - 买入步距×(档数+1)) → 追加一档；
 - 卖出：现价 >= 持仓均价 × (1 + 卖出步距) → 整仓止盈（引擎清仓）。
 
-锚点 = 最近一次成交价（未成交时取区间首日收盘价）。
+锚点 = 最近一次成交价；未成交（空仓）时取近 anchor_n 日最高收盘（默认 20 日），
+避免长期下跌标的被"历史首日价"绑架而天天触发。
 """
 import pandas as pd
 
@@ -19,7 +20,7 @@ from .base import BaseStrategy
 class Grid(BaseStrategy):
     code = "grid"
     name = "网格交易"
-    default_params = {"buy_step": 0.03, "sell_step": 0.03, "n_levels": 5}
+    default_params = {"buy_step": 0.03, "sell_step": 0.03, "n_levels": 5, "anchor_n": 20}
     multi_lot = True   # 允许已有持仓时继续加仓（多档并存）
 
     def __init__(self, params: dict | None = None):
@@ -42,7 +43,14 @@ class Grid(BaseStrategy):
         # 当前已持有档数：优先 ctx（回测由引擎维护），空仓强制归零
         levels = int(ctx.get("grid_lots", 0)) if ctx["shares"] > 0 else 0
 
-        anchor = ctx["last_price"] if ctx["last_price"] else float(df["close"].iloc[0])
+        # 锚点：有成交 → 最近成交价；空仓 → 近 anchor_n 日最高收盘。
+        # 注意不能用区间/全历史首日收盘：长期下跌股（如 96.97 → 23.8）会永远
+        # 处于"第 1 档已跌破"状态，天天重复推送假信号。
+        if ctx.get("last_price"):
+            anchor = ctx["last_price"]
+        else:
+            n = max(1, int(self.params.get("anchor_n", 20)))
+            anchor = float(df["close"].iloc[max(0, i - n + 1): i + 1].max())
 
         # 未满档且价格跌到"下一档"买入位 → 加仓（第 levels+1 档）
         if levels < n_levels and price <= anchor * (1 - buy_step * (levels + 1)):

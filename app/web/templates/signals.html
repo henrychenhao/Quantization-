@@ -61,6 +61,22 @@
 
 <div class="card">
   <div class="card-head">
+    <h2>触发频次 <span class="tag" style="margin-left:6px">近 30 天</span></h2>
+    <span class="hint">信号通胀体检：同一策略×标的反复触发（橙色）→ 复盘调参或加过滤条件</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <colgroup><col><col style="width:160px"><col style="width:86px"><col style="width:86px"><col style="width:132px"></colgroup>
+      <thead><tr>
+        <th style="text-align:left">标的</th><th style="text-align:left">策略</th><th>触发次数</th><th>覆盖天数</th><th style="text-align:left">最近触发</th>
+      </tr></thead>
+      <tbody id="freq-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
     <h2>待处理信号 <span id="pend-count" class="tag" style="margin-left:6px"></span></h2>
     <span class="hint">在券商完成交易后，点「已成交」回填真实价格与数量</span>
   </div>
@@ -218,8 +234,27 @@ async function ignore(id) {
   catch (e) { toast(e.message, "err"); }
 }
 
+/* 触发频次（近 30 天，信号通胀体检） */
+function loadFreq() {
+  api("/api/signal_frequency?days=30").then(d => {
+    const tbody = document.getElementById("freq-tbody");
+    if (!d.items.length) {
+      tbody.innerHTML = `<tr><td colspan="5"><div class="empty" style="border:none;padding:22px"><div class="t">近 30 天无信号记录</div><div class="d">信号产生后这里会展示各策略的触发频次</div></div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = d.items.map(r => `<tr>
+      <td style="text-align:left"><span class="wl-code" style="font-family:var(--mono);font-weight:600">${r.code}</span> <span class="muted">${r.name || ""}</span></td>
+      <td style="text-align:left">${r.strategy_name}</td>
+      <td class="num" style="${r.n >= 3 ? "color:var(--warn);font-weight:650" : ""}">${r.n}</td>
+      <td class="num muted">${r.day_cnt}</td>
+      <td class="muted" style="font-family:var(--mono);font-size:11.5px;text-align:left">${r.last_at}</td>
+    </tr>`).join("");
+  }).catch(() => {});
+}
+
 load();
 loadStats();
+loadFreq();
 
 /* 调度透明化：显示扫描计划与最近一次执行结果 */
 api("/api/scheduler_state").then(d => {

@@ -134,12 +134,17 @@ def job_data_sync(cfg: dict) -> None:
         _write_state("sync", "非交易日跳过")
         return
     source = AkShareSource()
+    ok, failed = 0, []
     for w in db.list_watchlist():
         try:
             n = refresh(w["code"], source, cfg["data"]["kline_dir"])
             print(f"[sync] {w['code']} K线刷新 {n} 根")
+            ok += 1
         except Exception as e:
+            failed.append(w["code"])
             print(f"[sync] {w['code']} 刷新失败: {e}")
+    if failed:
+        print(f"[sync] 注意：{len(failed)} 只标的刷新失败，次日同步会重试")
     try:
         n = db.expire_stale_signals()
         print(f"[sync] 信号过期归档 {n} 条")
@@ -156,7 +161,8 @@ def job_data_sync(cfg: dict) -> None:
         backup_data(cfg)
     except Exception as e:
         print(f"[sync] 数据备份失败: {e}")
-    _write_state("sync", "K线刷新/质量结算/备份完成")
+    _write_state("sync", f"K线刷新 {ok} 只" +
+                 (f"（失败：{'、'.join(failed)}）" if failed else "") + " / 质量结算 / 备份完成")
 
 
 def job_intraday(cfg: dict) -> None:

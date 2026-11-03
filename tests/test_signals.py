@@ -282,3 +282,51 @@ def test_single_strategy_push_unaffected(seeded_account, monkeypatch):
     assert len(calls) == 1
     assert "共振" not in calls[0][1]
     assert "建议" in calls[0][1]
+
+
+# ---------- 盘中极端涨跌防护（159107 异常价案例） ----------
+
+class _FakeSource:
+    """按需返回固定实时快照的数据源桩。"""
+    def __init__(self, spot):
+        self._spot = spot
+
+    def get_spots(self, codes):
+        return {c: self._spot for c in codes}
+
+
+def test_intraday_extreme_move_skipped(seeded_account, monkeypatch):
+    """盘中 |涨跌幅| 超阈值（默认 15%）的价格不生成信号（159107 异常价防护）。"""
+    _seed_watchlist()
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df([100.0] * 26))
+    monkeypatch.setattr(engine, "AkShareSource",
+                        lambda *a, **k: _FakeSource({"price": 120.0, "prev_close": 100.0,
+                                                     "change_pct": 20.0}))
+    r = engine.run_signals(CFG, dry_run=True, spot_mode=True)
+    assert not r["generated"]
+    assert any("超阈值" in s["reason"] for s in r["skipped"])
+
+
+def test_intraday_normal_move_generates(seeded_account, monkeypatch):
+    """盘中正常涨幅（8%）不受防护影响：横盘后当日拉升，双均线金叉照常触发。"""
+    _seed_watchlist()
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df([100.0] * 26))
+    monkeypatch.setattr(engine, "AkShareSource",
+                        lambda *a, **k: _FakeSource({"price": 108.0, "prev_close": 100.0,
+                                                     "change_pct": 8.0}))
+    r = engine.run_signals(CFG, dry_run=True, spot_mode=True)
+    assert len(r["generated"]) == 1
+
+
+# ---------- 触发频次统计（信号通胀体检） ----------
+
+def test_signal_frequency_stats(seeded_account):
+    """按策略×标的聚合触发次数与覆盖天数（含忽略状态）。"""
+    db.add_signal("600519", "测试股", "buy", "double_ma", "r1", 100.0, 100)
+    db.add_signal("600519", "测试股", "buy", "double_ma", "r2", 100.0, 100)
+    db.add_signal("600519", "测试股", "sell", "macd", "r3", 100.0, 100)
+    rows = db.signal_frequency(30)
+    agg = {(r["strategy"], r["code"]): r for r in rows}
+    assert agg[("double_ma", "600519")]["n"] == 2
+    assert agg[("double_ma", "600519")]["day_cnt"] == 1     # 同日两条
+    assert agg[("macd", "600519")]["n"] == 1

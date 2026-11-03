@@ -313,6 +313,17 @@ def api_signal_stats():
     return {"items": strategy_stats()}
 
 
+@app.get("/api/signal_frequency")
+def api_signal_frequency(days: int = 30):
+    """近 N 天信号触发频次（策略×标的）：信号通胀体检，复盘用。"""
+    names = {c: s.name for c, s in registry.all_strategies().items()}
+    items = []
+    for r in db.signal_frequency(max(1, min(days, 365))):
+        items.append({**dict(r), "name": _name_of(r["code"]),
+                      "strategy_name": names.get(r["strategy"], r["strategy"])})
+    return {"items": items, "days": days}
+
+
 @app.get("/api/health/source")
 def api_health_source():
     """数据源健康探测：新浪实时接口拉一只权重股，返回可用性与耗时。"""

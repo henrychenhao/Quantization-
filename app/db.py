@@ -195,6 +195,21 @@ def get_signal(sid: int) -> sqlite3.Row | None:
         return conn.execute("SELECT * FROM signal WHERE id=?", (sid,)).fetchone()
 
 
+def signal_frequency(days: int = 30) -> list[sqlite3.Row]:
+    """近 N 天各「策略×标的」信号触发频次（含忽略/过期，用于信号通胀复盘）。
+
+    返回字段：strategy, code, n（总条数）, day_cnt（覆盖的交易日数）, last_at。
+    """
+    with db() as conn:
+        return conn.execute(
+            "SELECT strategy, code, COUNT(*) AS n, "
+            "COUNT(DISTINCT date(created_at)) AS day_cnt, MAX(created_at) AS last_at "
+            "FROM signal WHERE created_at >= datetime('now','localtime', ?) "
+            "GROUP BY strategy, code ORDER BY n DESC, last_at DESC",
+            (f"-{int(days)} days",),
+        ).fetchall()
+
+
 def duplicate_today(code: str, strategy: str) -> bool:
     """同一标的 × 同一策略当日是否已有信号（去重闸门）。
 

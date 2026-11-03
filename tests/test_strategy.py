@@ -91,10 +91,23 @@ def test_rsi_sell_on_overbought_cross():
 
 
 def test_grid_buy_when_price_drops_below_anchor():
-    # 空仓：锚点=首日收盘 100，跌破 -3% → 买入
+    # 空仓：锚点=近 20 日最高收盘 100，跌破 -3% → 买入
     closes = [100.0, 100.0, 96.9]
     side, _ = _at("grid", closes)
     assert side == "buy"
+
+
+def test_grid_anchor_uses_recent_high_not_first_bar():
+    # 全历史首日 100，近 20 日横盘 24、现价 23.9（仅 -0.4%）：
+    # 正确锚点=24 → 23.9 > 24×0.97 不触发；旧逻辑用首日 100 会误触发
+    closes = [100.0] + [24.0] * 39 + [23.9]
+    assert _at("grid", closes)[0] is None
+
+
+def test_grid_anchor_recent_high_breaks_down():
+    # 近 20 日最高 24，现价 23.2（-3.3%）→ 相对近期高点触发第 1 档
+    closes = [100.0] + [24.0] * 39 + [23.2]
+    assert _at("grid", closes)[0] == "buy"
 
 
 def test_grid_sell_when_price_above_cost():

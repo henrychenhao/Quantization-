@@ -141,6 +141,14 @@ def run_signals(cfg: dict, dry_run: bool = False, spot_mode: bool = False) -> di
             if not info or not (info.get("price", 0) > 0):
                 skipped.append({"code": code, "reason": "实时价获取失败/停牌"})
                 continue
+            # 极端涨跌防护：|当日涨跌幅| 超阈值（默认 15%）的盘中价不生成信号。
+            # 防数据源异常值/瞬间脉冲追高（实锤案例：159107 盘中 +19.5% 异常价触发假金叉）。
+            max_move = float(cfg.get("risk", {}).get("max_intraday_move") or 0.15)
+            chg = info.get("change_pct")
+            if chg is not None and abs(float(chg)) / 100.0 > max_move:
+                skipped.append({"code": code,
+                                "reason": f"盘中涨跌 {float(chg):+.1f}% 超阈值 {max_move:.0%}，跳过（防异常价/追高）"})
+                continue
             spot_info = info                    # 未复权原始值（涨跌停判定用）
             spot = info["price"]
             today = pd.Timestamp.now().normalize()
