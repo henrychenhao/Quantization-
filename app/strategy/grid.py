@@ -7,7 +7,11 @@
 - 档位状态完全由账户上下文 ctx 推导（回测与实盘共用）：
     ctx["grid_lots"]        当前已持有的档数（回测由引擎维护 / 实盘由持仓估算）
 - 买入：持有档数 < n_levels 且现价 <= 锚点 × (1 - 买入步距×(档数+1)) → 追加一档；
-- 卖出：现价 >= 持仓均价 × (1 + 卖出步距) → 整仓止盈（引擎清仓）。
+- 卖出：现价 >= 持仓均价 × (1 + 卖出步距) → 整仓止盈（引擎清仓）；
+- 止损：stop_loss > 0 时，现价 <= 持仓均价 × (1 - stop_loss) → 整仓止损清仓
+  （默认 0 = 不止损）。**回测结论：10% 止损几乎在所有窗口破坏收益（24 窗口
+  仅 1 次胜出，全历史 +29.8%→-4.2%）——网格盈利模式就是跌了扛住等反弹，
+  止损会止在低点。网格的下跌风险应靠配置层 max_single_ratio 仓位上限控制。**
 
 锚点 = 最近一次成交价；未成交（空仓）时取近 anchor_n 日最高收盘（默认 20 日），
 避免长期下跌标的被"历史首日价"绑架而天天触发。
@@ -20,7 +24,8 @@ from .base import BaseStrategy
 class Grid(BaseStrategy):
     code = "grid"
     name = "网格交易"
-    default_params = {"buy_step": 0.03, "sell_step": 0.03, "n_levels": 5, "anchor_n": 20}
+    default_params = {"buy_step": 0.03, "sell_step": 0.03, "n_levels": 5,
+                      "anchor_n": 20, "stop_loss": 0.0}
     multi_lot = True   # 允许已有持仓时继续加仓（多档并存）
 
     def __init__(self, params: dict | None = None):
@@ -52,6 +57,11 @@ class Grid(BaseStrategy):
             n = max(1, int(self.params.get("anchor_n", 20)))
             anchor = float(df["close"].iloc[max(0, i - n + 1): i + 1].max())
 
+        # 止损优先：持仓跌破均价 - stop_loss → 整仓清仓（0=不启用）
+        sl = float(self.params.get("stop_loss") or 0)
+        if levels > 0 and ctx["avg_cost"] > 0 and sl > 0 \
+                and price <= ctx["avg_cost"] * (1 - sl):
+            return "sell"
         # 未满档且价格跌到"下一档"买入位 → 加仓（第 levels+1 档）
         if levels < n_levels and price <= anchor * (1 - buy_step * (levels + 1)):
             return "buy"
@@ -66,4 +76,4 @@ class Grid(BaseStrategy):
             return (f"网格买入档触发（现价 {price:.2f} "
                     f"跌破锚点 -{self.params['buy_step']*100:.0f}%）")
         return (f"网格卖出档触发（现价 {price:.2f} "
-                f"达到持仓均价 +{self.params['sell_step']*100:.0f}%）")
+                f"达到持仓均价 ±{self.params['sell_step']*100:.0f}% 或触发止损）")

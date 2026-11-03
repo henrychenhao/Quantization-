@@ -230,3 +230,49 @@ def test_atr_channel_flat_no_signal():
     sdf = s.compute(_vol_df([100.0] * 60))
     i = len(sdf) - 1
     assert s.signal(sdf, i, {"cash": 1e6, "shares": 0, "avg_cost": 0, "last_price": None}) is None
+
+
+# ---------- B 批参数开关（回测验证后的可选过滤） ----------
+
+def test_macd_min_dif_filter_blocks_below_zero():
+    """min_dif=0：零轴下方金叉不买（默认不过滤照买）。"""
+    from app.strategy.macd import MACD
+    # 下跌 60 根后反弹：金叉发生在 DIF≈-6.8 的零轴下方
+    closes = [120.0 - i * 1.0 for i in range(60)] + [61.0 + i * 0.8 for i in range(8)]
+    ctx = {"cash": 1e6, "shares": 0, "avg_cost": 0.0, "last_price": None}
+
+    s = MACD()
+    sdf = s.compute(make_df(closes))
+    assert any(s.signal(sdf, i, ctx) == "buy" for i in range(s.warmup(), len(sdf)))
+
+    s2 = MACD({"min_dif": 0})
+    sdf2 = s2.compute(make_df(closes))
+    assert not any(s2.signal(sdf2, i, ctx) == "buy" for i in range(s2.warmup(), len(sdf2)))
+
+
+def test_rsi_entry_mode_rebound_confirm():
+    """entry_mode=1 回升确认：买点从「下穿 30」延后到「回升站上 30」。"""
+    from app.strategy.rsi import RSI
+    closes = ([100.0 + i * 0.2 for i in range(20)]
+              + [103.8 - i * 1.5 for i in range(12)]
+              + [87.3 + i * 1.0 for i in range(6)])
+    ctx = {"cash": 1e6, "shares": 0, "avg_cost": 0.0, "last_price": None}
+
+    def first_buy(s):
+        sdf = s.compute(make_df(closes))
+        return next((i for i in range(s.warmup(), len(sdf))
+                     if s.signal(sdf, i, ctx) == "buy"), None)
+
+    i0, i1 = first_buy(RSI()), first_buy(RSI({"entry_mode": 1}))
+    assert i0 is not None and i1 is not None
+    assert i1 > i0          # 确认模式晚于下穿即买
+
+
+def test_grid_stop_loss_priority():
+    """stop_loss=10%：跌破均价 10% 优先止损；默认无止损则按档位继续加仓。"""
+    from app.strategy.grid import Grid
+    ctx = {"cash": 1e6, "shares": 100, "avg_cost": 100.0,
+           "last_price": 100.0, "grid_lots": 1}
+    sdf = make_df([100.0, 89.0])
+    assert Grid().signal(sdf, 1, ctx) == "buy"                       # 默认：89 触发第 2 档加仓
+    assert Grid({"stop_loss": 0.10}).signal(sdf, 1, ctx) == "sell"   # 止损：89 ≤ 100×0.9 清仓

@@ -194,9 +194,12 @@ function render() {
 
 /* 参数输入行（调参与另存副本共用；vals=预填值，defaults=默认参照） */
 function paramRows(s, vals) {
-  return Object.entries(s.defaults).map(([k, v]) => `
-    <div class="field"><label>${k}（默认 ${v}）</label>
-      <input class="input" type="number" step="any" data-pk="${k}" value="${vals[k]}"></div>`).join("");
+  return Object.entries(s.defaults).map(([k, v]) => {
+    const defTxt = v === -999999 ? "-999999（不限制）" : v;
+    return `
+    <div class="field"><label>${k}（默认 ${defTxt}）</label>
+      <input class="input" type="number" step="any" data-pk="${k}" value="${vals[k]}"></div>`;
+  }).join("");
 }
 
 function collectParams() {
