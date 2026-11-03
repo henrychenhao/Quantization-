@@ -304,6 +304,10 @@ td.num,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg>
       回测工作台
     </a>
+    <a href="/strategies" class="{{ 'active' if active=='strategies' else '' }}">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4"/></svg>
+      策略池
+    </a>
     <a href="/watchlist" class="{{ 'active' if active=='watchlist' else '' }}">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
       自选监控
@@ -324,7 +328,7 @@ td.num,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
   </nav>
   <div class="side-foot">
     <span class="dot"></span><b>本地运行</b> · 127.0.0.1<br>
-    数据源 新浪 · 半自动模式<br>
+    <span id="src-status">数据源 新浪 · 检测中…</span><br>
     信号需人工确认后记账
   </div>
 </aside>
@@ -373,6 +377,16 @@ const fmtPct = (x, signed = true) => x === null || x === undefined ? "—"
 const fmtMoney = x => "¥" + Number(x || 0).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
 const fmtNum = (x, d = 2) => Number(x || 0).toFixed(d);
 const pcls = x => x === null || x === undefined ? "" : (x > 0 ? "pos" : x < 0 ? "neg" : "");
+
+/* ---------- 数据源健康（侧边栏，全页共享） ---------- */
+(function () {
+  const el = document.getElementById("src-status");
+  if (!el) return;
+  fetch("/api/health/source").then(r => r.json()).then(d => {
+    if (d.ok) el.innerHTML = `数据源 ${d.source} · 正常 <span style="color:var(--down)">●</span>`;
+    else el.innerHTML = `数据源 ${d.source} · <span style="color:var(--up)">异常</span>`;
+  }).catch(() => { el.textContent = "数据源状态未知"; });
+})();
 </script>
 {% block scripts %}{% endblock %}
 </body>

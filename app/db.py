@@ -70,6 +70,18 @@ CREATE TABLE IF NOT EXISTS push_log (
     status TEXT,
     created_at TEXT DEFAULT (datetime('now','localtime'))
 );
+CREATE TABLE IF NOT EXISTS strategy_params (
+    code TEXT PRIMARY KEY,
+    params TEXT NOT NULL DEFAULT '{}',
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE TABLE IF NOT EXISTS strategy_custom (
+    code TEXT PRIMARY KEY,
+    base TEXT NOT NULL,
+    name TEXT NOT NULL,
+    params TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
 CREATE INDEX IF NOT EXISTS idx_signal_status ON signal(status);
 CREATE INDEX IF NOT EXISTS idx_signal_code ON signal(code);
 """
@@ -251,6 +263,55 @@ def expire_stale_signals(max_trade_days: int = 3,
 
 
 # ---------- trade / account ----------
+
+# ---------- strategy params / custom（策略参数化） ----------
+
+def get_strategy_params(code: str) -> dict:
+    """某策略的用户参数覆盖（未设置返回空 dict）。"""
+    with db() as conn:
+        row = conn.execute("SELECT params FROM strategy_params WHERE code=?", (code,)).fetchone()
+    if not row:
+        return {}
+    try:
+        return json.loads(row["params"])
+    except json.JSONDecodeError:
+        return {}
+
+
+def set_strategy_params(code: str, params: dict) -> None:
+    """保存参数覆盖（整体覆盖式）。"""
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO strategy_params(code, params, updated_at) VALUES(?,?,datetime('now','localtime')) "
+            "ON CONFLICT(code) DO UPDATE SET params=excluded.params, updated_at=datetime('now','localtime')",
+            (code, json.dumps(params, ensure_ascii=False)),
+        )
+
+
+def del_strategy_params(code: str) -> None:
+    """清空某策略的参数覆盖（恢复默认参数）。"""
+    with db() as conn:
+        conn.execute("DELETE FROM strategy_params WHERE code=?", (code,))
+
+
+def list_strategy_customs() -> list[sqlite3.Row]:
+    with db() as conn:
+        return conn.execute("SELECT * FROM strategy_custom ORDER BY code").fetchall()
+
+
+def add_strategy_custom(code: str, base: str, name: str, params: dict) -> None:
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO strategy_custom(code, base, name, params) VALUES(?,?,?,?)",
+            (code, base, name, json.dumps(params, ensure_ascii=False)),
+        )
+
+
+def del_strategy_custom(code: str) -> None:
+    with db() as conn:
+        conn.execute("DELETE FROM strategy_custom WHERE code=?", (code,))
+        conn.execute("DELETE FROM strategy_params WHERE code=?", (code,))
+
 
 def add_trade(signal_id: int | None, code: str, side: str, price: float, shares: int, fee: float, note: str = "") -> None:
     with db() as conn:

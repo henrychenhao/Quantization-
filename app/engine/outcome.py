@@ -12,7 +12,7 @@ import pandas as pd
 
 from app import db
 from app.datasource.kline_store import load_local
-from app.strategy.registry import STRATEGIES
+from app.strategy import registry
 
 
 def settle_signal_outcomes(cfg: dict) -> int:
@@ -73,12 +73,13 @@ def strategy_stats(limit: int = 20) -> list[dict]:
             st["s5"].append(s["ret_5d"])
         if s["ret_20d"] is not None:
             st["s20"].append(s["ret_20d"])
+    insts = registry.all_strategies()
     out = []
     for code, st in stats.items():
-        cls = STRATEGIES.get(code)
+        inst = insts.get(code)
         out.append({
             "strategy": code,
-            "name": cls.name if cls else code,
+            "name": inst.name if inst else code,
             "count": st["count"],
             "win_rate": round(st["wins"] / st["count"], 3) if st["count"] else 0.0,
             "avg_1d": round(sum(st["s1"]) / len(st["s1"]), 4) if st["s1"] else None,

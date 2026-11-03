@@ -16,12 +16,14 @@ from app.backtest.engine import Fees, run_backtest
 from app.backtest.report import compute_metrics
 from app.datasource.akshare_source import AkShareSource
 from app.datasource.kline_store import get_or_fetch
-from app.strategy.registry import STRATEGIES
+from app.strategy import registry
 
-# 策略风格分类（推荐结论文案用）
+# 策略风格分类（推荐结论文案用；副本按其 base 归类）
 CATEGORY = {
     "double_ma": "趋势", "macd": "趋势", "donchian": "趋势",
-    "boll_mr": "均值回归", "rsi": "均值回归", "grid": "网格震荡",
+    "momentum": "动量", "atr_channel": "波动率",
+    "boll_mr": "均值回归", "rsi": "均值回归", "kdj": "超买超卖",
+    "grid": "网格震荡",
 }
 
 WINDOWS = [("3m", 90), ("6m", 182), ("1y", 365), ("3y", 1095), ("all", None)]
@@ -36,7 +38,7 @@ def _slice(df: pd.DataFrame, days: int | None) -> pd.DataFrame:
 
 
 def recommend(cfg: dict, code: str, capital: float = 100000.0) -> dict:
-    """对某标的跑 6 策略 × 5 窗口，按风险调整得分排序并给出推荐组合。"""
+    """对某标的跑全部策略 × 5 窗口，按风险调整得分排序并给出推荐组合。"""
     df_all = get_or_fetch(code, AkShareSource(), cfg["data"]["kline_dir"])
     if df_all is None or df_all.empty:
         raise ValueError(f"未取到 {code} 的行情数据")
@@ -44,10 +46,10 @@ def recommend(cfg: dict, code: str, capital: float = 100000.0) -> dict:
     fees = Fees(**cfg.get("fees", {}))
     rows = []
 
-    for sc, cls in STRATEGIES.items():
-        strategy = cls()
+    for sc, strategy in registry.all_strategies().items():
         sdf_all = strategy.compute(df_all)      # 全量预计算指标
-        row = {"code": sc, "name": strategy.name, "category": CATEGORY.get(sc, "-")}
+        row = {"code": sc, "name": strategy.name,
+               "category": CATEGORY.get(getattr(strategy, "base_code", None) or sc, "-")}
 
         for key, days in WINDOWS:
             dfw = _slice(sdf_all, days)

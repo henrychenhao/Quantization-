@@ -29,7 +29,8 @@ def clean_db():
     db.set_cash(0.0)
     yield
     with db.db() as c:
-        for t in ("watchlist", "signal", "trade", "asset_snapshot", "push_log"):
+        for t in ("watchlist", "signal", "trade", "asset_snapshot", "push_log",
+                  "strategy_params", "strategy_custom"):
             c.execute(f"DELETE FROM {t}")
         c.execute("DELETE FROM account")
 

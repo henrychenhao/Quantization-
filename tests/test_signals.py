@@ -251,3 +251,34 @@ def test_today_signals_never_expire(seeded_account):
     engine.run_signals(CFG, dry_run=False)      # 今日信号
     assert db.expire_stale_signals(calendar_path="data/__no_such_cal__.txt") == 0
     assert db.list_signals("pending")
+
+
+# ---------- 合并推送：同标的同向多策略只推一条 ----------
+
+def test_merged_push_single_message_for_multi_strategies(seeded_account, monkeypatch):
+    """同一标的同时触发两个买入策略 → 落 2 条信号、只推送 1 条。"""
+    calls = []
+    monkeypatch.setattr(engine.wecom, "push", lambda title, content, **k: calls.append((title, content)) or "mock")
+    # 双均线 + 唐奇安都被同一根大阳线触发金叉/突破
+    closes = [100.0] * 25 + [108.0]
+    monkeypatch.setattr(engine, "get_or_fetch", lambda *a: make_df(closes))
+    wid = _seed_watchlist(code="600519", strategies=("double_ma", "donchian"))
+    r = engine.run_signals(CFG, dry_run=False)
+    assert len(r["generated"]) == 2                          # 两条信号落库
+    assert db.list_signals("pending").__len__() == 2
+    assert len(calls) == 1                                   # 只推送一条
+    body = calls[0][1]
+    assert "2 个策略共振" in body
+    assert "双均线交叉" in body and "唐奇安通道突破" in body
+
+
+def test_single_strategy_push_unaffected(seeded_account, monkeypatch):
+    """单策略触发时推送文案仍是单条且含建议量。"""
+    calls = []
+    monkeypatch.setattr(engine.wecom, "push", lambda title, content, **k: calls.append((title, content)) or "mock")
+    _seed_watchlist()
+    r = engine.run_signals(CFG, dry_run=False)
+    assert len(r["generated"]) == 1
+    assert len(calls) == 1
+    assert "共振" not in calls[0][1]
+    assert "建议" in calls[0][1]

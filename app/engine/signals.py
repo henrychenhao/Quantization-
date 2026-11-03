@@ -21,7 +21,7 @@ from app.datasource.akshare_source import AkShareSource
 from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch, load_local
 from app.notify import wecom
-from app.strategy.registry import STRATEGIES
+from app.strategy import registry
 
 
 def _portfolio_market_value(kline_dir: str) -> float:
@@ -108,6 +108,7 @@ def run_signals(cfg: dict, dry_run: bool = False, spot_mode: bool = False) -> di
     items = [w for w in db.list_watchlist() if w["quant_enabled"]]
     fees = Fees(**cfg.get("fees", {}))
     kline_dir = cfg["data"]["kline_dir"]
+    all_inst = registry.all_strategies()   # 含调参与副本，整个扫描期口径一致
     source = AkShareSource()
     wecom.init(cfg.get("push", {}))          # 信号推送前确保 webhook 就绪（幂等）
 
@@ -180,13 +181,13 @@ def run_signals(cfg: dict, dry_run: bool = False, spot_mode: bool = False) -> di
             "last_price": db.last_trade_price(code),   # 网格锚点
         }
         for sc in strategies:
-            if sc not in STRATEGIES:
+            if sc not in all_inst:
                 continue
             # 闸门4：去重校验
             if not dry_run and db.duplicate_today(code, sc):
                 skipped.append({"code": code, "reason": f"{sc} 当日已推送过（含已忽略），不重复"})
                 continue
-            strategy = STRATEGIES[sc]()
+            strategy = all_inst[sc]
             # 网格等多档策略：由持仓量估算已持有档数（每档股数按初始资金占比估算）
             if getattr(strategy, "multi_lot", False) and pos:
                 lot_shares = max(100, int((db.get_initial_cash() * strategy.lot_ratio) / price // 100 * 100))
@@ -238,13 +239,27 @@ def run_signals(cfg: dict, dry_run: bool = False, spot_mode: bool = False) -> di
                 continue
 
             sid = db.add_signal(code, name, side, sc, reason, price, shares)
-            # 推送（webhook 未配置时自动降级为 mock + push_log）
-            content = wecom.signal_msg(code, name, side, strategy.name, reason,
-                                       price, shares, amount, cash=cash if side == "buy" else None)
-            status = wecom.push(f"交易信号 {code}", content)
-            generated.append({"id": sid, "code": code, "side": side, "strategy": sc,
+            generated.append({"id": sid, "code": code, "name": name, "side": side,
+                              "strategy": sc, "strategy_name": strategy.name,
                               "reason": reason, "price": price, "shares": shares,
-                              "push": status})
+                              "amount": amount,
+                              "cash": cash if side == "buy" else None})
+
+    # 推送：同标的同向多策略合并成一条（防刷屏；各策略建议量独立展示）
+    if not dry_run and generated:
+        groups: dict[tuple, list] = {}
+        for g in generated:
+            groups.setdefault((g["code"], g["side"]), []).append(g)
+        for (code, side), items in groups.items():
+            head = items[0]
+            content = wecom.signal_msg_merged(
+                code, head["name"], side, head["price"],
+                [{"strategy_name": it["strategy_name"], "reason": it["reason"],
+                  "shares": it["shares"], "amount": it["amount"]} for it in items],
+                cash=head["cash"])
+            status = wecom.push(f"交易信号 {code}", content)
+            for it in items:
+                it["push"] = status
 
     return {"generated": generated, "skipped": skipped,
             "watch": len(items), "cash": account.cash()}

@@ -23,9 +23,9 @@ from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch
 from app.engine import signals as signal_engine
 from app.engine.outcome import strategy_stats
-from app.engine.recommend import recommend
+from app.engine.recommend import CATEGORY, recommend
 from app.notify import wecom
-from app.strategy.registry import STRATEGIES
+from app.strategy import registry
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE, "static")
@@ -41,8 +41,10 @@ db.seed_watchlist(cfg.get("watchlist", []))
 db.init_cash(cfg.get("account", {}).get("initial_cash", 100000))
 wecom.init(cfg.get("push", {}))
 
-_strategy_meta = [{"code": k, "name": v.name, "params": v.default_params}
-                  for k, v in STRATEGIES.items()]
+def _strategy_meta() -> list[dict]:
+    """页面用策略列表（动态：含调参副本与调参后参数），供回测/自选/信号页渲染。"""
+    return [{"code": k, "name": s.name, "params": dict(s.params)}
+            for k, s in registry.all_strategies().items()]
 
 
 def _to(m: dict) -> dict:
@@ -77,20 +79,20 @@ def root():
 @app.get("/backtest")
 def page_backtest(request: Request):
     return templates.TemplateResponse(request, "backtest.html", {
-        "active": "backtest", "strategies": _strategy_meta, "watchlist": _watch_presets(),
+        "active": "backtest", "strategies": _strategy_meta(), "watchlist": _watch_presets(),
     })
 
 
 @app.get("/watchlist")
 def page_watchlist(request: Request):
     return templates.TemplateResponse(request, "watchlist.html", {
-        "active": "watchlist", "strategies": _strategy_meta,
+        "active": "watchlist", "strategies": _strategy_meta(),
     })
 
 
 @app.get("/signals")
 def page_signals(request: Request):
-    return templates.TemplateResponse(request, "signals.html", {"active": "signals", "strategies": _strategy_meta})
+    return templates.TemplateResponse(request, "signals.html", {"active": "signals", "strategies": _strategy_meta()})
 
 
 @app.get("/account")
@@ -311,6 +313,49 @@ def api_signal_stats():
     return {"items": strategy_stats()}
 
 
+@app.get("/api/health/source")
+def api_health_source():
+    """数据源健康探测：新浪实时接口拉一只权重股，返回可用性与耗时。"""
+    import time as _t
+    t0 = _t.time()
+    try:
+        quotes = AkShareSource().get_spots(["000001"])
+        price = quotes.get("000001", {}).get("price", 0)
+        ok = price > 0
+    except Exception:
+        ok = False
+    return {"source": "新浪", "ok": ok, "latency_ms": round((_t.time() - t0) * 1000)}
+
+
+@app.get("/api/scheduler_state")
+def api_scheduler_state():
+    """调度器最近执行状态 + 各任务计划时间（页面透明化展示）。"""
+    import json as _json
+    import os as _os
+    state: dict = {}
+    try:
+        with open(_os.path.join("data", "scheduler_state.json")) as f:
+            state = _json.load(f)
+    except (FileNotFoundError, _json.JSONDecodeError):
+        pass
+    jobs = cfg.get("schedule", {})
+
+    def _fmt(j, default):
+        j = jobs.get(j, default)
+        return f"{int(j.get('hour', 0)):02d}:{int(j.get('minute', 0)):02d}"
+
+    return {
+        "state": state,
+        "plan": {
+            "heartbeat": "交易日 " + _fmt("heartbeat", {"hour": 9, "minute": 35}),
+            "signal": "交易日 " + _fmt("eod_signal", {"hour": 14, "minute": 50}),
+            "sync": "交易日 " + _fmt("data_sync", {"hour": 17, "minute": 30}),
+            "intraday": f"交易时段每 {jobs.get('intraday', 0) or '—'} 分钟"
+                        if jobs.get("intraday") else "已关闭",
+        },
+    }
+
+
 @app.post("/api/signals/run")
 def api_signals_run(body: RunSignals):
     try:
@@ -401,10 +446,11 @@ def api_backtest(req: BacktestReq):
     dates = [d.strftime("%Y-%m-%d") for d in df.index]
     benchmark = None
 
+    insts = registry.all_strategies()
     for sc in req.strategies:
-        if sc not in STRATEGIES:
+        if sc not in insts:
             continue
-        strategy = STRATEGIES[sc]()
+        strategy = insts[sc]
         sdf = strategy.compute(df)
         res = run_backtest(sdf, strategy, req.capital, fees, code=req.code)
         m = compute_metrics(res, req.capital)
@@ -427,6 +473,123 @@ def api_backtest(req: BacktestReq):
         "kline": {"start": df.index[0].strftime("%Y-%m-%d"),
                   "end": df.index[-1].strftime("%Y-%m-%d"), "days": len(df)},
     }
+
+
+# ---------- API: strategies（策略池） ----------
+
+class StrategyParamsReq(BaseModel):
+    params: dict[str, float]
+
+
+class CustomStrategyReq(BaseModel):
+    base: str
+    name: str
+    params: dict[str, float] = {}
+
+
+@app.get("/strategies")
+def page_strategies(request: Request):
+    """策略池页：内置策略调参 + 自定义副本管理（数据由 /api/strategies 拉取）。"""
+    return templates.TemplateResponse(request, "strategies.html", {"active": "strategies"})
+
+
+@app.get("/api/strategies")
+def api_strategies():
+    """策略池：内置（含当前生效参数）+ 自定义副本；含每策略被自选绑定数。"""
+    from app.llm.analyst import _STRATEGY_KNOWLEDGE
+    bind_cnt: dict[str, int] = {}
+    for w in db.list_watchlist():
+        for sc in json.loads(w["strategies"] or "[]"):
+            bind_cnt[sc] = bind_cnt.get(sc, 0) + 1
+    items = []
+    for code, s in registry.all_strategies().items():
+        base = getattr(s, "base_code", None)
+        items.append({
+            "code": code, "name": s.name, "base": base or code,
+            "is_custom": bool(base),
+            "category": CATEGORY.get(base or code, "—"),
+            "params": dict(s.params), "defaults": dict(type(s).default_params),
+            "doc": _STRATEGY_KNOWLEDGE.get(base or code, ""),
+            "watchers": bind_cnt.get(code, 0),
+        })
+    return {"items": items}
+
+
+def _coerce_param(defaults: dict, k: str, v) -> float | int:
+    """参数值转数字；默认值为整数且新值也是整数时保持 int（展示口径一致）。"""
+    v = float(v)
+    if isinstance(defaults.get(k), int) and v.is_integer():
+        return int(v)
+    return v
+
+
+@app.put("/api/strategies/{code}/params")
+def api_strategy_params(code: str, body: StrategyParamsReq):
+    """策略调参：只存与默认值的差异（内置与副本统一走 strategy_params 表），
+    保存后全链路（信号/回测/推荐/AI）即时生效。"""
+    customs = {c["code"]: c for c in db.list_strategy_customs()}
+    if code not in registry.BUILT_IN and code not in customs:
+        return JSONResponse(status_code=404, content={"error": f"策略 {code} 不存在"})
+    base = customs[code]["base"] if code in customs else code
+    defaults = registry.BUILT_IN[base].default_params
+    bad = [k for k in body.params if k not in defaults]
+    if bad:
+        return JSONResponse(status_code=400,
+                            content={"error": f"非法参数名：{', '.join(bad)}（可选：{', '.join(defaults)}）"})
+    cur = db.get_strategy_params(code)
+    cur.update({k: _coerce_param(defaults, k, v) for k, v in body.params.items()})
+    db.set_strategy_params(code, cur)
+    return {"ok": True, "params": dict(registry.get(code).params)}
+
+
+@app.delete("/api/strategies/{code}/params")
+def api_strategy_params_reset(code: str):
+    """恢复默认参数：清空该策略（内置或副本）的参数覆盖。"""
+    customs = {c["code"] for c in db.list_strategy_customs()}
+    if code not in registry.BUILT_IN and code not in customs:
+        return JSONResponse(status_code=404, content={"error": f"策略 {code} 不存在"})
+    db.del_strategy_params(code)
+    return {"ok": True, "params": dict(registry.get(code).params)}
+
+
+@app.post("/api/strategies/custom")
+def api_strategy_custom_add(body: CustomStrategyReq):
+    """从内置策略另存调参副本：新 code 新名，可与原策略并存、绑定不同标的。"""
+    base = body.base.strip()
+    if base not in registry.BUILT_IN:
+        return JSONResponse(status_code=400,
+                            content={"error": f"基础策略 {base} 须为内置策略：{', '.join(registry.BUILT_IN)}"})
+    name = body.name.strip()
+    if not name:
+        return JSONResponse(status_code=400, content={"error": "副本名称不能为空"})
+    defaults = registry.BUILT_IN[base].default_params
+    bad = [k for k in body.params if k not in defaults]
+    if bad:
+        return JSONResponse(status_code=400,
+                            content={"error": f"非法参数名：{', '.join(bad)}（可选：{', '.join(defaults)}）"})
+    exist = {c["code"] for c in db.list_strategy_customs()} | set(registry.BUILT_IN)
+    n = 1
+    new_code = f"{base}_c{n}"
+    while new_code in exist:
+        n += 1
+        new_code = f"{base}_c{n}"
+    body.params = {k: _coerce_param(defaults, k, v) for k, v in body.params.items()}
+    db.add_strategy_custom(new_code, base, name, body.params)
+    return {"ok": True, "code": new_code, "name": name,
+            "params": dict(registry.get(new_code).params)}
+
+
+@app.delete("/api/strategies/custom/{code}")
+def api_strategy_custom_del(code: str):
+    """删除副本：顺带清理自选页对该副本的绑定（内置策略不可删）。"""
+    if next((c for c in db.list_strategy_customs() if c["code"] == code), None) is None:
+        return JSONResponse(status_code=404, content={"error": f"副本 {code} 不存在"})
+    db.del_strategy_custom(code)
+    for w in db.list_watchlist():
+        sts = json.loads(w["strategies"] or "[]")
+        if code in sts:
+            db.update_watchlist(w["id"], strategies=[s for s in sts if s != code])
+    return {"ok": True}
 
 
 # ---------- API: AI 分析 ----------

@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}策略池 · 量化终端{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>策略池</h1>
+    <div class="sub">调参改的是策略本身（全局生效）· 另存副本可与原策略并存绑定不同标的 · 保存后信号 / 回测 / 推荐 / AI 即时同口径</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>内置策略</h2>
+    <span class="hint">蓝色参数 = 已偏离默认值 · 调参 / 另存副本均在此行操作</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th style="text-align:left">名称</th><th style="text-align:left">代码</th><th style="text-align:left">风格</th>
+        <th style="text-align:left;min-width:300px">原理</th><th style="text-align:left;min-width:260px">参数（当前生效）</th>
+        <th>绑定</th><th style="text-align:right">操作</th>
+      </tr></thead>
+      <tbody id="t-built"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h2>自定义副本</h2>
+    <span class="hint">基于内置策略的调参变体 · 删除副本会同步解绑自选，历史信号保留</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th style="text-align:left">名称</th><th style="text-align:left">代码</th><th style="text-align:left">基于</th>
+        <th style="text-align:left;min-width:260px">参数（当前生效）</th>
+        <th>绑定</th><th style="text-align:right">操作</th>
+      </tr></thead>
+      <tbody id="t-custom"></tbody>
+    </table>
+    <div id="custom-empty" style="display:none;padding:26px;text-align:center;color:var(--text-3);font-size:13px">
+      暂无自定义副本 · 在上方内置策略行点「另存副本」创建
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+/* ---------- 策略池：内置调参 + 副本管理 ---------- */
+let ITEMS = [];
+
+async function load() {
+  try {
+    const d = await api("/api/strategies");
+    ITEMS = d.items;
+    render();
+  } catch (e) { toast(e.message, "err"); }
+}
+
+const byCode = c => ITEMS.find(s => s.code === c);
+
+function paramChips(s) {
+  return Object.entries(s.params).map(([k, v]) => {
+    const changed = s.defaults[k] !== v;
+    return `<span style="${changed ? "color:var(--brand);font-weight:650" : "color:var(--text-3)"}"
+      title="${changed ? "默认 " + s.defaults[k] : "默认值"}">${k}=${v}</span>`;
+  }).join('<span style="color:var(--line);margin:0 2px">·</span>');
+}
+
+function render() {
+  const built = ITEMS.filter(s => !s.is_custom);
+  const custom = ITEMS.filter(s => s.is_custom);
+  document.getElementById("t-built").innerHTML = built.map(s => `
+    <tr>
+      <td><b>${s.name}</b></td>
+      <td style="font-family:var(--mono,monospace)">${s.code}</td>
+      <td>${s.category}</td>
+      <td style="color:var(--text-3);font-size:12.5px;max-width:340px">${s.doc}</td>
+      <td>${paramChips(s)}</td>
+      <td>${s.watchers ? s.watchers + " 个自选" : "—"}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn sm" onclick="openParams('${s.code}')">调参</button>
+        <button class="btn sm brand-ghost" onclick="openCopy('${s.code}')">另存副本</button>
+      </td>
+    </tr>`).join("");
+  document.getElementById("t-custom").innerHTML = custom.map(s => `
+    <tr>
+      <td><b>${s.name}</b></td>
+      <td style="font-family:var(--mono,monospace)">${s.code}</td>
+      <td>${(byCode(s.base) || {name: s.base}).name}</td>
+      <td>${paramChips(s)}</td>
+      <td>${s.watchers ? s.watchers + " 个自选" : "—"}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn sm" onclick="openParams('${s.code}')">调参</button>
+        <button class="btn sm danger" onclick="openDel('${s.code}')">删除</button>
+      </td>
+    </tr>`).join("");
+  document.getElementById("custom-empty").style.display = custom.length ? "none" : "block";
+}
+
+/* 参数输入行（调参与另存副本共用；vals=预填值，defaults=默认参照） */
+function paramRows(s, vals) {
+  return Object.entries(s.defaults).map(([k, v]) => `
+    <div class="field"><label>${k}（默认 ${v}）</label>
+      <input class="input" type="number" step="any" data-pk="${k}" value="${vals[k]}"></div>`).join("");
+}
+
+function collectParams() {
+  const params = {};
+  for (const el of document.querySelectorAll("#modal-root input[data-pk]")) {
+    const v = parseFloat(el.value);
+    if (!Number.isFinite(v)) { toast(`参数 ${el.dataset.pk} 需为数字`, "err"); return null; }
+    params[el.dataset.pk] = v;
+  }
+  return params;
+}
+
+/* ---------- 调参（改原策略，全局生效） ---------- */
+function openParams(code) {
+  const s = byCode(code);
+  if (!s) return;
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">调参 · ${s.name}<div class="sub">改的是策略本身 · 信号 / 回测 / 推荐 / AI 全链路即时生效</div></div>
+      <div class="modal-body">${paramRows(s, s.params)}</div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn danger" id="p-reset">恢复默认</button>
+        <button class="btn primary" id="p-save">保存</button>
+      </div>
+    </div>`, () => {
+    document.getElementById("p-save").addEventListener("click", async () => {
+      const params = collectParams();
+      if (!params) return;
+      try {
+        await api(`/api/strategies/${code}/params`, "PUT", { params });
+        closeModal(); toast(`「${s.name}」参数已保存，全链路即时生效`); load();
+      } catch (e) { toast(e.message, "err"); }
+    });
+    document.getElementById("p-reset").addEventListener("click", async () => {
+      try {
+        await api(`/api/strategies/${code}/params`, "DELETE");
+        closeModal(); toast(`「${s.name}」已恢复默认参数`); load();
+      } catch (e) { toast(e.message, "err"); }
+    });
+  });
+}
+
+/* ---------- 另存副本（新 code 新名，与原策略并存） ---------- */
+function openCopy(code) {
+  const s = byCode(code);
+  if (!s) return;
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">另存副本 · 基于 ${s.name}<div class="sub">原策略保持不变 · 副本可绑定到不同标的做对比</div></div>
+      <div class="modal-body">
+        <div class="field"><label>副本名称</label><input class="input" id="c-name" placeholder="如：双均线(快线敏感版)"></div>
+        ${paramRows(s, s.params)}
+      </div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn primary" id="c-save">创建</button>
+      </div>
+    </div>`, () => {
+    document.getElementById("c-save").addEventListener("click", async () => {
+      const name = document.getElementById("c-name").value.trim();
+      if (!name) { toast("副本名称不能为空", "err"); return; }
+      const params = collectParams();
+      if (!params) return;
+      try {
+        const d = await api("/api/strategies/custom", "POST", { base: s.base, name, params });
+        closeModal(); toast(`已创建副本「${d.name}」（${d.code}）`); load();
+      } catch (e) { toast(e.message, "err"); }
+    });
+  });
+}
+
+/* ---------- 删除副本（内置不可删） ---------- */
+function openDel(code) {
+  const s = byCode(code);
+  if (!s) return;
+  openModal(`
+    <div class="modal">
+      <div class="modal-head">删除副本 · ${s.name}<div class="sub">已绑定该副本的 ${s.watchers || 0} 个自选将同步解绑 · 历史信号记录保留</div></div>
+      <div class="modal-foot">
+        <button class="btn" onclick="closeModal()">取消</button>
+        <button class="btn danger" id="d-confirm">删除</button>
+      </div>
+    </div>`, () => {
+    document.getElementById("d-confirm").addEventListener("click", async () => {
+      try {
+        await api(`/api/strategies/custom/${code}`, "DELETE");
+        closeModal(); toast(`已删除副本「${s.name}」`); load();
+      } catch (e) { toast(e.message, "err"); }
+    });
+  });
+}
+
+load();
+</script>
+{% endblock %}

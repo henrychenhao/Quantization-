@@ -40,6 +40,7 @@
   <div>
     <h1>信号中心</h1>
     <div class="sub">信号 → 人工下单 → 成交回填记账 · 系统不自动下单</div>
+    <div class="sub" id="sched-info" style="margin-top:6px;color:var(--text-3)"></div>
   </div>
   <div class="page-actions">
     <a class="btn" href="/watchlist">
@@ -217,5 +218,14 @@ async function ignore(id) {
 
 load();
 loadStats();
+
+/* 调度透明化：显示扫描计划与最近一次执行结果 */
+api("/api/scheduler_state").then(d => {
+  const s = d.state["signal"] || d.state["intraday"];
+  const parts = [`尾盘扫描 ${d.plan.signal}`];
+  if (s) parts.push(`上次 ${s.last}（${s.note}）`);
+  parts.push(d.plan.intraday === "已关闭" ? "盘中轮询已关闭" : `盘中轮询 ${d.plan.intraday}`);
+  document.getElementById("sched-info").textContent = parts.join(" · ");
+}).catch(() => {});
 </script>
 {% endblock %}

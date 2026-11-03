@@ -1,10 +1,10 @@
 """AI 分析师：把本地真实数据组装成结构化上下文，喂给大模型做有据分析。
 
 四类能力对应四类上下文：
-- 个股诊断：行情摘要 + 五指标读数 + 六策略当前触发状态 + 该标的持仓
+- 个股诊断：行情摘要 + 五指标读数 + 全部策略当前触发状态 + 该标的持仓
 - 持仓复盘：账户概况 + 每只持仓的成本/浮盈 + 近期信号质量
 - 信号解读：最近待处理信号 + 近期历史信号
-- 策略问答：内置六策略原理说明（不注入行情）
+- 策略问答：全部策略原理说明（内置 + 调参/副本，不注入行情）
 
 设计原则：数据事实全部由本地计算生成，模型只负责解读，禁止编造数字。
 """
@@ -19,7 +19,7 @@ from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch
 from app.engine.outcome import strategy_stats
 from app.indicators import boll, donchian_high, donchian_low, ma, macd, rsi
-from app.strategy.registry import STRATEGIES
+from app.strategy import registry
 
 _STRATEGY_KNOWLEDGE = {
     "double_ma": "双均线交叉：MA5 上穿 MA20（金叉）买入，下穿（死叉）卖出。趋势跟随型，震荡市易被反复打脸。",
@@ -190,12 +190,11 @@ def stock_context(code: str, cfg: dict) -> str:
                 f"【板块】所属行业「{industry}」：行业指数近5日 {_pct(ind5)}、近20日 {_pct(ind20)}；"
                 f"个股近5日 {_pct(stock5)}{rel}")
 
-    # 六策略当前触发状态（与信号引擎同构）
+    # 全部策略当前触发状态（与信号引擎同构，含调参与副本）
     ctx = _account_ctx_for(code)
     status = []
-    for sc, cls in STRATEGIES.items():
-        s = cls()
-        if sc == "grid" and ctx["shares"] > 0:
+    for sc, s in registry.all_strategies().items():
+        if getattr(s, "base_code", sc) == "grid" and ctx["shares"] > 0:
             lot_est = max(100, int((db.get_initial_cash() * s.lot_ratio) / last // 100 * 100))
             ctx["grid_lots"] = max(1, round(ctx["shares"] / lot_est)) if lot_est else 1
         sdf = s.compute(df)
@@ -271,8 +270,20 @@ def signal_context() -> str:
 
 
 def strategy_knowledge() -> str:
-    """策略问答上下文：六策略原理（静态知识）。"""
-    return "【系统内六策略】\n" + "\n".join(f"- {k}：{v}" for k, v in _STRATEGY_KNOWLEDGE.items())
+    """策略问答上下文：全部策略原理（内置静态说明 + 调参/副本动态标注）。"""
+    lines = ["【系统内策略】"]
+    for code, s in registry.all_strategies().items():
+        base = getattr(s, "base_code", None)
+        doc = _STRATEGY_KNOWLEDGE.get(base or code, "内置策略，说明暂缺。")
+        if base:
+            lines.append(f"- {s.name}（{code}）：基于 {base} 的调参副本。{doc} "
+                         f"当前参数：{json.dumps(s.params, ensure_ascii=False)}")
+        elif s.params != type(s).default_params:
+            lines.append(f"- {s.name}（{code}）：{doc} "
+                         f"当前参数：{json.dumps(s.params, ensure_ascii=False)}")
+        else:
+            lines.append(f"- {s.name}（{code}）：{doc}")
+    return "\n".join(lines)
 
 
 def system_prompt(scope_code: str | None, cfg: dict) -> str:

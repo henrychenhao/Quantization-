@@ -59,3 +59,23 @@ def signal_msg(code: str, name: str, side: str, strategy_name: str, reason: str,
             f"触发：{reason}\n"
             + (f"可用现金 {cash:,.0f} · " if cash is not None else "")
             + "请自行决策下单，成交后在系统确认记账")
+
+
+def signal_msg_merged(code: str, name: str, side: str, ref_price: float,
+                      strategies: list[dict], cash: float | None = None) -> str:
+    """同标的同向多策略合并推送（防刷屏，吸收自同类平台）。
+
+    strategies: [{strategy_name, reason, shares, amount}, ...] —— 各策略
+    建议量独立展示，不互相覆盖（各策略资金闸门口径不同，取最大值会误导）。
+    """
+    arrow = "🔴 拟买入" if side == "buy" else "🟢 拟卖出"
+    resonate = f"（{len(strategies)} 个策略共振）" if len(strategies) > 1 else ""
+    head = (f"【交易信号】{arrow} · {code} {name}{resonate}\n现价 {ref_price:.2f}")
+    if cash is not None:
+        head += f" · 可用现金 {cash:,.0f}"
+    lines = [head]
+    for s in strategies:
+        lines.append(f"- {s['strategy_name']}：建议 {s['shares']} 股（约 {s['amount']:,.0f} 元）")
+        lines.append(f"  触发：{s['reason']}")
+    lines.append("请自行决策下单，成交后在系统确认记账")
+    return "\n".join(lines)

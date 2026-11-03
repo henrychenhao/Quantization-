@@ -56,6 +56,32 @@ def is_trade_day(day=None) -> bool:
         return day.weekday() < 5              # 日历不可用：退化为非周末
 
 
+# ---------- 调度状态（供页面透明化展示） ----------
+
+STATE_PATH = os.path.join("data", "scheduler_state.json")
+
+
+def _write_state(job: str, note: str) -> None:
+    """把各 job 的最近执行结果写入状态文件（页面「上次扫描/同步」展示用）。
+
+    调度器单进程顺序执行，无并发写风险；写失败静默不影响任务本身。
+    """
+    try:
+        state = {}
+        if os.path.exists(STATE_PATH):
+            import json
+            with open(STATE_PATH) as f:
+                state = json.load(f)
+        state[job] = {"last": datetime.now().strftime("%Y-%m-%d %H:%M"), "note": note}
+        import json
+        tmp = STATE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+        os.replace(tmp, STATE_PATH)
+    except Exception as e:
+        print(f"[state] 写入失败: {e}")
+
+
 # ---------- 三个定时任务 ----------
 
 def _last_prices(cfg: dict, codes: list[str]) -> dict[str, float]:
@@ -73,6 +99,7 @@ def job_heartbeat(cfg: dict) -> None:
     _ensure_notify(cfg)
     if not is_trade_day():
         print("[heartbeat] 非交易日，跳过")
+        _write_state("heartbeat", "非交易日跳过")
         return
     items = db.list_watchlist()
     enabled = sum(1 for w in items if w["quant_enabled"])
@@ -83,24 +110,28 @@ def job_heartbeat(cfg: dict) -> None:
                                   snap["cash"], snap["market_value"], snap["total"])
     status = wecom.push("每日心跳", content)
     print(f"[heartbeat] 监控{len(items)}只(开启{enabled}) 总资产¥{snap['total']:,.0f} push={status}")
+    _write_state("heartbeat", f"总资产¥{snap['total']:,.0f}")
 
 
 def job_signal_scan(cfg: dict) -> None:
-    """交易日 14:50：尾盘信号扫描（四道校验 → 落库 → 推送）。"""
+    """交易日 14:50：尾盘信号扫描（五道校验 → 落库 → 合并推送）。"""
     _ensure_notify(cfg)
     if not is_trade_day():
         print("[signal] 非交易日，跳过")
+        _write_state("signal", "非交易日跳过")
         return
     result = signal_engine.run_signals(cfg)
     print(f"[signal] 标的{result['watch']} 生成{len(result['generated'])} 跳过{len(result['skipped'])}")
     for s in result["skipped"]:
         print(f"  - 跳过 {s['code']}: {s['reason']}")
+    _write_state("signal", f"生成{len(result['generated'])}条")
 
 
 def job_data_sync(cfg: dict) -> None:
     """交易日 17:30：收盘后全量刷新自选标的 K 线，并结算信号质量。"""
     if not is_trade_day():
         print("[sync] 非交易日，跳过")
+        _write_state("sync", "非交易日跳过")
         return
     source = AkShareSource()
     for w in db.list_watchlist():
@@ -125,6 +156,7 @@ def job_data_sync(cfg: dict) -> None:
         backup_data(cfg)
     except Exception as e:
         print(f"[sync] 数据备份失败: {e}")
+    _write_state("sync", "K线刷新/质量结算/备份完成")
 
 
 def job_intraday(cfg: dict) -> None:
@@ -133,16 +165,15 @@ def job_intraday(cfg: dict) -> None:
     只在交易时段内执行（09:30-11:30 / 13:00-15:00），非时段静默返回。
     """
     if not is_trade_day():
-        print("[intraday] 非交易日，跳过")
         return
     now = datetime.now().time()
     am = time(9, 30) <= now <= time(11, 30)
     pm = time(13, 0) <= now <= time(15, 0)
     if not (am or pm):
-        print("[intraday] 非交易时段，跳过")
         return
     result = signal_engine.run_signals(cfg, spot_mode=True)
     print(f"[intraday] 标的{result['watch']} 生成{len(result['generated'])} 跳过{len(result['skipped'])}")
+    _write_state("intraday", f"生成{len(result['generated'])}条")
 
 
 # ---------- 启动 ----------
