@@ -217,6 +217,39 @@ def unsettled_signals() -> list[sqlite3.Row]:
         return conn.execute("SELECT * FROM signal WHERE settled_at IS NULL").fetchall()
 
 
+def expire_stale_signals(max_trade_days: int = 3,
+                         calendar_path: str = "data/trade_dates.txt") -> int:
+    """把超过 N 个交易日仍未跟随的 pending 信号置为 expired（过期归档）。
+
+    信号有时效性：触发价错过即失真，未跟的信号不该一直挂在待办里。
+    交易日历缺失时退化为自然日 5 天（保守）。返回本次过期条数。
+    """
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    rows = [s for s in list_signals("pending") if s["created_at"][:10] < today]
+    if not rows:
+        return 0
+    cal = None
+    try:
+        with open(calendar_path) as f:
+            cal = sorted(x.strip() for x in f if x.strip())
+    except FileNotFoundError:
+        pass
+    n = 0
+    for s in rows:
+        d0 = s["created_at"][:10]
+        if cal:
+            elapsed = sum(1 for d in cal if d0 < d < today)     # 信号日之后的完整交易日
+            expired = elapsed >= max_trade_days
+        else:
+            expired = (datetime.now() - datetime.strptime(d0, "%Y-%m-%d")).days >= 5
+        if expired:
+            with db() as conn:
+                conn.execute("UPDATE signal SET status='expired' WHERE id=?", (s["id"],))
+            n += 1
+    return n
+
+
 # ---------- trade / account ----------
 
 def add_trade(signal_id: int | None, code: str, side: str, price: float, shares: int, fee: float, note: str = "") -> None:

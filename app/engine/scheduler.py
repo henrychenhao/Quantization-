@@ -110,6 +110,11 @@ def job_data_sync(cfg: dict) -> None:
         except Exception as e:
             print(f"[sync] {w['code']} 刷新失败: {e}")
     try:
+        n = db.expire_stale_signals()
+        print(f"[sync] 信号过期归档 {n} 条")
+    except Exception as e:
+        print(f"[sync] 信号过期失败: {e}")
+    try:
         from app.engine.outcome import settle_signal_outcomes
         n = settle_signal_outcomes(cfg)
         print(f"[sync] 信号质量结算更新 {n} 条")

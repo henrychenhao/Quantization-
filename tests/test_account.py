@@ -140,3 +140,36 @@ def test_update_trade_invalid_values_rejected(seeded_account):
         account.update_trade(tid, price=10.0, shares=-5, fee=0)
     with pytest.raises(ValueError):
         account.update_trade(tid, price=10.0, shares=100, fee=-1)
+
+# ---------- 手动记账（不依赖信号） ----------
+
+def test_manual_trade_buy_then_sell(seeded_account):
+    r = account.manual_trade("600519", "buy", 100.0, 200, 5.0, "跌破支撑手动补仓")
+    assert r["cash"] == pytest.approx(100000 - 200 * 100 - 5)
+    pos = account.position_of("600519")
+    assert pos["shares"] == 200
+
+    r2 = account.manual_trade("600519", "sell", 110.0, 100, 5.0)
+    assert account.position_of("600519")["shares"] == 100
+    # 手动流水不带信号关联，备注原样保留供回溯
+    assert any(t["note"] == "跌破支撑手动补仓" for t in db.list_trades())
+    # 现金重推正确：-20005 + 11000 - 5
+    assert account.cash() == pytest.approx(100000 - 20000 - 5 + 11000 - 5)
+
+
+def test_manual_trade_insufficient_cash(seeded_account):
+    with pytest.raises(ValueError, match="现金不足"):
+        account.manual_trade("600519", "buy", 100.0, 99999, 0)
+
+
+def test_manual_trade_sell_more_than_held(seeded_account):
+    with pytest.raises(ValueError, match="持仓不足"):
+        account.manual_trade("600519", "sell", 100.0, 100, 0)
+
+
+def test_manual_trade_validates_args(seeded_account):
+    for code, side, price, shares in [("", "buy", 1, 100), ("600519", "hold", 1, 100),
+                                      ("600519", "buy", 0, 100), ("600519", "buy", 1, 0),
+                                      ("600519", "buy", 1, -5)]:
+        with pytest.raises(ValueError):
+            account.manual_trade(code, side, price, shares, -1 if shares == -5 else 0)

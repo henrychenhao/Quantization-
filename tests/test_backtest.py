@@ -167,3 +167,41 @@ def test_walk_forward_trades_segmented():
     assert wf["in_sample"]["rounds"] == 0        # 只有买入，未形成回合
     assert wf["out_sample"]["rounds"] == 1
     assert wf["out_sample"]["win_rate"] == 1.0   # 卖价 > 买价
+
+
+# ---------- 回测评级 ----------
+
+from app.backtest.report import compute_metrics, grade_backtest
+
+
+def test_grade_recommend_when_all_good():
+    g = grade_backtest({"total_return": 0.20, "sharpe": 0.8, "n_trades": 10, "max_drawdown": -0.20})
+    assert g["grade"] == "推荐" and g["reasons"] == []
+
+
+def test_grade_usable_with_gap_reasons():
+    g = grade_backtest({"total_return": 0.05, "sharpe": 0.3, "n_trades": 10, "max_drawdown": -0.20})
+    assert g["grade"] == "可用"
+    assert "夏普低于0.5" in g["reasons"] and "收益未达15%" in g["reasons"]
+
+
+def test_grade_caution_when_trades_too_few():
+    """收益再高、交易不足 3 笔也不给推荐——样本太少易被单笔运气放大。"""
+    g = grade_backtest({"total_return": 0.50, "sharpe": 1.2, "n_trades": 2, "max_drawdown": -0.10})
+    assert g["grade"] == "慎用"
+
+
+def test_grade_bad_on_loss():
+    g = grade_backtest({"total_return": -0.01, "sharpe": 0.0, "n_trades": 10, "max_drawdown": -0.20})
+    assert g["grade"] == "不推荐"
+
+
+def test_grade_mid_on_tiny_profit():
+    g = grade_backtest({"total_return": 0.01, "sharpe": 0.1, "n_trades": 5, "max_drawdown": -0.10})
+    assert g["grade"] == "一般"
+
+
+def test_metrics_includes_grade():
+    r = _wf_result(n=100, up_days=70)
+    m = compute_metrics(r, 100000.0)
+    assert m["grade"]["grade"] in ("推荐", "可用", "一般", "慎用", "不推荐")

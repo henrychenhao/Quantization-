@@ -73,6 +73,40 @@ def follow_signal(sid: int, price: float, shares: int, fee: float = 0.0, note: s
             "fee": fee, "amount": round(amount, 2)}
 
 
+def manual_trade(code: str, side: str, price: float, shares: int,
+                 fee: float = 0.0, note: str = "") -> dict:
+    """手动记账：不依赖信号直接记一笔成交（吸收自同类平台）。
+
+    适用：手动抄底/止盈等系统信号之外的操作；note 建议注明决策依据，
+    便于日后回溯。校验与信号记账同口径：买入需现金覆盖、卖出需持仓足够。
+    """
+    if not code or not code.strip():
+        raise ValueError("代码不能为空")
+    if side not in ("buy", "sell"):
+        raise ValueError("方向必须是 buy / sell")
+    if price <= 0 or shares <= 0:
+        raise ValueError("价格与数量必须大于 0")
+    if fee < 0:
+        raise ValueError("费用不能为负")
+
+    code = code.strip()
+    cash_now = db.get_cash()
+    amount = price * shares
+    if side == "buy" and amount + fee > cash_now:
+        raise ValueError(f"现金不足：需要 ¥{amount + fee:,.0f}，可用 ¥{cash_now:,.0f}")
+    if side == "sell":
+        pos = position_of(code)
+        held = pos["shares"] if pos else 0
+        if held < shares:
+            raise ValueError(f"持仓不足：{code} 持仓 {held}，卖 {shares}")
+
+    db.add_trade(None, code, side, price, shares, fee, note=note or "手动记账")
+    _, new_cash = _derive(db.list_trades())
+    db.set_cash(new_cash)
+    return {"code": code, "side": side, "price": price, "shares": shares,
+            "fee": fee, "amount": round(amount, 2), "cash": round(new_cash, 2)}
+
+
 def update_trade(tid: int, price: float, shares: int, fee: float, note: str | None = None) -> dict:
     """修改流水（账本纠错）：更新该行后按全部流水重推现金与持仓。
 

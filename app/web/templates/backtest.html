@@ -14,6 +14,14 @@
   #result tbody tr:hover{background:#F6F8FC}
   #result tbody tr.sel{background:var(--brand-soft)}
   #result tbody tr.sel td:first-child strong{color:var(--brand-dark)}
+  /* 回测评级徽标 */
+  .grade{display:inline-block;font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;white-space:nowrap}
+  .grade.g-reco{background:rgba(47,107,255,.10);color:var(--brand)}
+  .grade.g-ok{background:rgba(15,164,127,.10);color:var(--down)}
+  .grade.g-mid{background:var(--line-2);color:var(--text-3)}
+  .grade.g-caution{background:rgba(224,138,0,.12);color:#B36F00}
+  .grade.g-bad{background:rgba(229,72,77,.10);color:var(--up)}
+  .grade-note{font-size:11px;color:var(--text-3)}
 </style>
 
 <div class="page-head">
@@ -151,8 +159,10 @@ function render(d, capital, code) {
       </div>
     </div>`;
 
+  const GRADECLS = { "推荐": "g-reco", "可用": "g-ok", "一般": "g-mid", "慎用": "g-caution", "不推荐": "g-bad" };
   const rows = d.rows.map((r, i) => `<tr data-idx="${i}" ${i === 0 ? 'class="sel"' : ""}>
       <td><strong>${r.name}</strong><span class="muted" style="font-family:var(--mono);font-size:11px;margin-left:8px">${r.code}</span></td>
+      <td><span class="grade ${GRADECLS[r.grade?.grade] || 'g-mid'}" title="${(r.grade?.reasons || []).join('；') || '各项达标'}">${r.grade?.grade || '—'}</span>${r.grade?.reasons?.length ? `<div class="grade-note">${r.grade.reasons[0]}</div>` : ""}</td>
       <td class="num ${r.total_return >= 0 ? 'pos' : 'neg'}"><strong>${fmtPct(r.total_return)}</strong></td>
       <td class="num">${fmtPct(r.annual_return)}</td>
       <td class="num ${r.excess_return >= 0 ? 'pos' : 'neg'}">${fmtPct(r.excess_return)}</td>
@@ -179,6 +189,15 @@ function render(d, capital, code) {
     </tr>`;
   }).join("");
 
+  const gradeLegend = `
+    <div style="padding:10px 4px 2px;font-size:11.5px;color:var(--text-3)">
+      评级规则：<span class="grade g-reco">推荐</span> 收益≥15% + 夏普≥0.5 + 交易≥5笔 + 回撤≤35% ·
+      <span class="grade g-ok">可用</span> 收益≥3%但有短板 ·
+      <span class="grade g-mid">一般</span> 仅微利 ·
+      <span class="grade g-caution">慎用</span> 交易不足3笔（收益易被单笔运气放大） ·
+      <span class="grade g-bad">不推荐</span> 亏损
+    </div>`;
+
   document.getElementById("result").innerHTML = `
     <div class="result-fade">
     ${stats}
@@ -190,12 +209,13 @@ function render(d, capital, code) {
       <div class="table-wrap">
         <table>
           <thead><tr>
-            <th>策略</th><th>总收益</th><th>年化</th><th>超额(vs持有)</th><th>最大回撤</th>
+            <th>策略</th><th>评级</th><th>总收益</th><th>年化</th><th>超额(vs持有)</th><th>最大回撤</th>
             <th>夏普</th><th>胜率</th><th>交易笔数</th><th>期末资产</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
+      ${gradeLegend}
     </div>
     <div class="card">
       <div class="card-head">

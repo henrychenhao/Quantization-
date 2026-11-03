@@ -19,6 +19,7 @@
   .sig-params b{font-family:var(--mono);color:var(--text);font-weight:650}
   .sig-reason{margin-top:7px;font-size:12px;color:var(--text-3);line-height:1.6}
   .sig-actions{display:flex;flex-direction:column;justify-content:center;gap:8px;padding:14px 16px;flex:none;border-left:1px solid var(--line-2);background:#FBFCFE}
+  .badge.expired{background:var(--line-2);color:var(--text-3)}
   /* 策略战绩 */
   .stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
   .stat-card{border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;background:var(--card)}
@@ -87,7 +88,7 @@
 
 {% block scripts %}
 <script>
-const STATUS_TXT = { pending: "待处理", followed: "已跟随", ignored: "已忽略" };
+const STATUS_TXT = { pending: "待处理", followed: "已跟随", ignored: "已忽略", expired: "已过期" };
 const SNAME = {{ strategies|tojson }};
 const sname = c => (SNAME.find(s => s.code === c) || {}).name || c;
 

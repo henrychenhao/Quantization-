@@ -202,3 +202,52 @@ def test_gate_dedup_ignored_counts(seeded_account):
     r2 = engine.run_signals(CFG, dry_run=False)
     assert r2["generated"] == []
     assert any("当日已推送过" in s["reason"] for s in r2["skipped"])
+
+
+# ---------- 信号过期（3 个交易日未跟随自动归档） ----------
+
+from datetime import datetime, timedelta
+
+
+def _add_pending_days_ago(code, days, strategy="double_ma"):
+    """直接插一条 N 天前创建的 pending 信号（绕过当日去重）。"""
+    with db.db() as c:
+        c.execute(
+            "INSERT INTO signal(code,name,side,strategy,reason,ref_price,suggest_shares,created_at,status)"
+            " VALUES(?,?,?,?,?,?,?,?, 'pending')",
+            (code, "测试股", "buy", strategy, "测试", 10.0, 100,
+             (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")),
+        )
+
+
+def test_expire_stale_signals_by_calendar(tmp_path, seeded_account):
+    """自定义日历：信号日之后 3 个完整交易日 → 过期。"""
+    days = [(datetime.now() - timedelta(days=n)).strftime("%Y-%m-%d") for n in range(2, 12)]
+    cal = tmp_path / "cal.txt"
+    cal.write_text("\n".join(days), encoding="utf-8")
+    _add_pending_days_ago("600519", 9)      # 日历内：之后有 ≥3 个交易日
+    _add_pending_days_ago("600000", 3)      # 日历内：之后仅 1 个交易日
+    n = db.expire_stale_signals(calendar_path=str(cal))
+    assert n == 1
+    statuses = {s["code"]: s["status"] for s in db.list_signals()}
+    assert statuses["600519"] == "expired"
+    assert statuses["600000"] == "pending"
+
+
+def test_expire_fallback_to_natural_days(seeded_account):
+    """日历缺失时退化：自然日 ≥5 天过期。"""
+    _add_pending_days_ago("600519", 7)
+    _add_pending_days_ago("600000", 2)
+    n = db.expire_stale_signals(calendar_path="data/__no_such_cal__.txt")
+    assert n == 1
+    statuses = {s["code"]: s["status"] for s in db.list_signals()}
+    assert statuses["600519"] == "expired"
+    assert statuses["600000"] == "pending"
+
+
+def test_today_signals_never_expire(seeded_account):
+    """当日信号不参与过期（当日 K 线未走完）。"""
+    _seed_watchlist()
+    engine.run_signals(CFG, dry_run=False)      # 今日信号
+    assert db.expire_stale_signals(calendar_path="data/__no_such_cal__.txt") == 0
+    assert db.list_signals("pending")

@@ -51,3 +51,32 @@ def donchian_high(high: pd.Series, n: int) -> pd.Series:
 def donchian_low(low: pd.Series, n: int) -> pd.Series:
     """唐奇安下轨：过去 n 日最低"""
     return low.rolling(n).min()
+
+
+def kdj(high: pd.Series, low: pd.Series, close: pd.Series,
+        n: int = 9, k_smooth: int = 3, d_smooth: int = 3):
+    """KDJ 三线（国内行情软件口径）。返回 (k, d, j)。
+
+    RSV = (C - LLV) / (HHV - LLV) × 100；K = SMA(RSV, 3, 1)、D = SMA(K, 3, 1)，
+    ewm(alpha=1/3) 与通达信 SMA(X,N,M=1) 等价。
+    """
+    llv = low.rolling(n, min_periods=1).min()
+    hhv = high.rolling(n, min_periods=1).max()
+    rng = hhv - llv
+    # 一字板（rng=0）时 RSV 无定义，取 50 中性（对齐行情软件口径）；保持 float dtype
+    rsv = ((close - llv) / rng * 100).where(rng != 0, 50.0)
+    k = rsv.ewm(alpha=1 / k_smooth, adjust=False).mean()
+    d = k.ewm(alpha=1 / d_smooth, adjust=False).mean()
+    j = 3 * k - 2 * d
+    return k, d, j
+
+
+def atr(high: pd.Series, low: pd.Series, close: pd.Series, n: int = 14) -> pd.Series:
+    """ATR 真实波幅均值（Wilder 平滑，alpha=1/n）。"""
+    prev_close = close.shift(1)
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+    return tr.ewm(alpha=1 / n, adjust=False).mean()

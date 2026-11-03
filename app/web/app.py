@@ -298,6 +298,7 @@ class RunSignals(BaseModel):
 
 @app.get("/api/signals")
 def api_signals():
+    db.expire_stale_signals()       # 惰性过期：打开信号中心即见最新状态
     items = []
     for s in db.list_signals():
         items.append({**dict(s), "name": _name_of(s["code"])})
@@ -339,6 +340,25 @@ class UpdateTradeReq(BaseModel):
     shares: int
     fee: float = 0.0
     note: str | None = None
+
+
+class ManualTradeReq(BaseModel):
+    code: str
+    side: str
+    price: float
+    shares: int
+    fee: float = 0.0
+    note: str = ""
+
+
+@app.post("/api/trades")
+def api_manual_trade(body: ManualTradeReq):
+    """手动记账：不依赖信号直接记一笔成交，现金与持仓按全部流水重推。"""
+    try:
+        return account.manual_trade(body.code.strip(), body.side, body.price,
+                                    body.shares, body.fee, body.note)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
 
 
 @app.put("/api/trades/{tid}")

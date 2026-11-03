@@ -134,3 +134,86 @@ def test_warmup_bounds_all_strategies():
         ctx = {"cash": 1e6, "shares": 0, "avg_cost": 0.0, "last_price": None}
         for i in range(min(s.warmup(), 5)):
             assert s.signal(sdf, i, ctx) is None, f"{code} 在 warmup 内触发了信号"
+
+# ---------- 新增三策略：KDJ / 动量突破 / ATR 通道 ----------
+
+def _vol_df(closes, pct=0.02):
+    """带日内波动的 K 线（高开低收有差异，ATR 才有真实波幅）。"""
+    return make_df(closes, high=[c * (1 + pct) for c in closes],
+                   low=[c * (1 - pct) for c in closes])
+
+
+def _scan_all(strategy, closes, with_vol=False):
+    """扫描全序列，返回全部信号 [(i, side, close)]。"""
+    s = STRATEGIES[strategy]()
+    sdf = s.compute(_vol_df(closes) if with_vol else make_df(closes))
+    out = []
+    for i in range(s.warmup(), len(sdf)):
+        side = s.signal(sdf, i, {"cash": 1e6, "shares": 0, "avg_cost": 0, "last_price": None})
+        if side:
+            out.append((i, side, float(sdf["close"].iloc[i])))
+    return out
+
+
+def test_kdj_buy_on_low_golden_cross():
+    """超卖后反弹 → 低位金叉（D<80）买入。"""
+    closes = [50.0] * 10 + [50 - i * 1.5 for i in range(1, 12)] + [36.0, 40.0, 44.0]
+    sigs = _scan_all("kdj", closes)
+    assert any(side == "buy" for _, side, _ in sigs)
+    i, side, _ = next(x for x in sigs if x[1] == "buy")
+    sdf = STRATEGIES["kdj"]().compute(make_df(closes))
+    assert sdf["kdj_d"].iloc[i] < 80          # 金叉不在超买区追高
+
+
+def test_kdj_sell_on_high_dead_cross():
+    """高位滞涨回落 → 高位死叉（D>20）卖出。"""
+    closes = [50.0] * 10 + [50 + i * 3.0 for i in range(1, 16)] + [95.0, 91.0, 87.0, 84.0, 82.0]
+    sigs = _scan_all("kdj", closes)
+    assert any(side == "sell" for _, side, _ in sigs)
+
+
+def test_kdj_flat_market_no_signal():
+    """单边横盘（RSV 恒定无交叉）不触发。"""
+    assert _scan_all("kdj", [100.0] * 30) == []
+
+
+def test_momentum_buy_on_strong_surge():
+    closes = [100.0] * 61 + [115.0]
+    side, sdf = _at("momentum", closes)
+    assert side == "buy"
+    assert sdf["mom"].iloc[-1] == pytest.approx(0.15)
+
+
+def test_momentum_sell_on_breakdown():
+    closes = [100.0] * 61 + [95.0]
+    side, _ = _at("momentum", closes)
+    assert side == "sell"
+
+
+def test_momentum_idle_in_flat_market():
+    side, _ = _at("momentum", [100.0] * 80)
+    assert side is None
+
+
+def test_atr_channel_buy_on_breakout():
+    """带波动横盘 → 温和拉升 → 最后一根大跳上穿上轨。"""
+    closes = [100.0] * 40 + [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 125.0]
+    s = STRATEGIES["atr_channel"]()
+    sdf = s.compute(_vol_df(closes))
+    i = len(sdf) - 1
+    assert s.signal(sdf, i, {"cash": 1e6, "shares": 0, "avg_cost": 0, "last_price": None}) == "buy"
+
+
+def test_atr_channel_sell_on_breakdown():
+    closes = [100.0] * 40 + [99, 98, 97, 96, 95, 94, 93, 92, 91, 90, 75.0]
+    s = STRATEGIES["atr_channel"]()
+    sdf = s.compute(_vol_df(closes))
+    i = len(sdf) - 1
+    assert s.signal(sdf, i, {"cash": 1e6, "shares": 0, "avg_cost": 0, "last_price": None}) == "sell"
+
+
+def test_atr_channel_flat_no_signal():
+    s = STRATEGIES["atr_channel"]()
+    sdf = s.compute(_vol_df([100.0] * 60))
+    i = len(sdf) - 1
+    assert s.signal(sdf, i, {"cash": 1e6, "shares": 0, "avg_cost": 0, "last_price": None}) is None

@@ -1,10 +1,13 @@
 """策略注册表：把策略类按 code 登记，引擎/CLI/Web 只认 code。"""
+from .atr_channel import ATRChannel
 from .base import BaseStrategy
 from .boll_mr import BollMR
 from .donchian import Donchian
 from .double_ma import DoubleMA
 from .grid import Grid
+from .kdj import KDJ
 from .macd import MACD
+from .momentum import Momentum
 from .rsi import RSI
 
 STRATEGIES: dict[str, type[BaseStrategy]] = {
@@ -14,6 +17,9 @@ STRATEGIES: dict[str, type[BaseStrategy]] = {
     "donchian": Donchian,
     "rsi": RSI,
     "grid": Grid,
+    "kdj": KDJ,
+    "momentum": Momentum,
+    "atr_channel": ATRChannel,
 }
 
 

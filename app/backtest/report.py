@@ -75,6 +75,40 @@ def walk_forward(res, capital: float, oos_ratio: float = 0.3) -> dict | None:
     }
 
 
+def grade_backtest(m: dict) -> dict:
+    """回测结果评级（规则透明，吸收自同类平台）。
+
+    推荐区  收益≥15% 且 夏普≥0.5 且 交易≥5 笔 且 回撤≤35%
+    可用    收益≥3%，但未全部满足推荐条件（附缺口原因）
+    一般    仅微利（0 ≤ 收益 < 3%）
+    慎用    交易不足 3 笔——样本太少，收益率容易被单笔运气放大
+    不推荐  亏损
+    """
+    total = m["total_return"]
+    sharpe = m["sharpe"]
+    trades = m["n_trades"]
+    mdd = abs(m["max_drawdown"])          # max_drawdown 为负值
+
+    if total < 0:
+        return {"grade": "不推荐", "reasons": ["亏损"]}
+    if trades < 3:
+        return {"grade": "慎用", "reasons": [f"仅 {trades} 笔交易，收益不可信"]}
+    gaps = []
+    if total < 0.15:
+        gaps.append("收益未达15%")
+    if sharpe < 0.5:
+        gaps.append("夏普低于0.5")
+    if trades < 5:
+        gaps.append("交易少于5笔")
+    if mdd > 0.35:
+        gaps.append("回撤大")
+    if not gaps:
+        return {"grade": "推荐", "reasons": []}
+    if total >= 0.03:
+        return {"grade": "可用", "reasons": gaps}
+    return {"grade": "一般", "reasons": ["仅微利"] + gaps}
+
+
 def compute_metrics(res, capital: float) -> dict:
     eq = res.equity
     bm = res.benchmark_equity
@@ -124,6 +158,8 @@ def compute_metrics(res, capital: float) -> dict:
         "final_asset": final_asset,
         "start": res.start,
         "end": res.end,
+        "grade": grade_backtest({"total_return": total_return, "sharpe": sharpe,
+                             "n_trades": len(res.trades), "max_drawdown": max_drawdown}),
         "walk_forward": walk_forward(res, capital),
     }
 
