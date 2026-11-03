@@ -2,9 +2,10 @@
 {% block title %}信号中心 · 量化终端{% endblock %}
 {% block content %}
 <style>
+  #pending{display:grid;grid-template-columns:repeat(auto-fit,minmax(620px,1fr));gap:10px}
   .sig-card{
     display:flex;align-items:stretch;border:1px solid var(--line);border-radius:12px;
-    overflow:hidden;margin-bottom:10px;background:var(--card);
+    overflow:hidden;background:var(--card);
     transition:box-shadow .15s,border-color .15s;
   }
   .sig-card:hover{box-shadow:var(--shadow);border-color:#D5DCE8}
@@ -127,7 +128,8 @@ function loadStats() {
 function load() {
   api("/api/signals").then(d => {
     // 后端字段为 ref_price / suggest_shares，统一映射成 price / shares 供渲染与记账弹窗使用
-    const items = d.items.map(s => ({ ...s, price: s.ref_price, shares: s.suggest_shares }));
+    const items = d.items.map(s => ({ ...s, price: s.ref_price, shares: s.suggest_shares,
+      priceTxt: Number(s.ref_price).toFixed(3) }));
     const pend = items.filter(s => s.status === "pending");
     document.getElementById("pend-count").textContent = pend.length;
 
@@ -146,7 +148,7 @@ function load() {
               </div>
               <div class="sig-params">
                 <span>建议 <b>${s.shares}</b> 股（${Math.floor(s.shares / 100)} 手）</span>
-                <span>参考价 <b>${s.price}</b></span>
+                <span>参考价 <b>${s.priceTxt}</b></span>
                 <span>预计金额 <b>${fmtMoney(amount)}</b></span>
                 <span>策略 <b>${sname(s.strategy)}</b></span>
               </div>
@@ -171,7 +173,7 @@ function load() {
       <td style="text-align:center"><span class="badge ${s.side === "buy" ? "buy" : "sell"}">${s.side === "buy" ? "买入" : "卖出"}</span></td>
       <td class="num" title="${s.strategy}" style="text-align:left">${sname(s.strategy)}</td>
       <td style="text-align:left;white-space:normal" class="muted">${s.reason || "—"}</td>
-      <td class="num">${s.shares}股 @ ${s.price}</td>
+      <td class="num">${s.shares}股 @ ${s.priceTxt}</td>
       <td style="text-align:center"><span class="badge ${s.status}">${STATUS_TXT[s.status] || s.status}</span></td>
     </tr>`).join("") || `<tr><td colspan="7"><div class="empty" style="border:none;padding:24px"><div class="t">暂无历史信号</div><div class="d">待处理信号在「已成交，记账」或「忽略」后<br>会自动归档到这里</div></div></td></tr>`;
   }).catch(e => toast(e.message, "err"));

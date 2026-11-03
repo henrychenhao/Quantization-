@@ -224,6 +224,7 @@ function editTrade(t) {
 (function () {
   const SNAP = {{ snapshots|tojson }};
   if (!SNAP || !SNAP.length) return;
+  SNAP.reverse();   // 后端按最新在前返回，图表时间轴需左早右晚
   const chart = echarts.init(document.getElementById("assetChart"));
   chart.setOption({
     grid: { left: 52, right: 16, top: 24, bottom: 30 },

@@ -4,7 +4,7 @@
 <style>
   .wl-code{font-family:var(--mono);font-weight:600;font-size:12.5px}
   .wl-name{color:var(--text-2);font-size:12.5px}
-  .tag-row{display:flex;flex-wrap:wrap;gap:5px;max-width:280px}
+  .tag-row{display:flex;flex-wrap:wrap;gap:5px}
   .rec-reason{
     background:linear-gradient(90deg,#F0FAF6 0%,#F7FCFA 100%);
     border:1px solid #CBEADF;border-left:3px solid var(--cyan);
@@ -37,7 +37,8 @@
     <button class="btn ghost sm" id="btn-auto-industry" onclick="autoAllIndustry()">自动识别全部行业</button>
   </div>
   <div class="table-wrap">
-    <table>
+    <table style="table-layout:fixed">
+      <colgroup><col style="width:8%"><col style="width:10%"><col style="width:7.5%"><col style="width:7.5%"><col style="width:6.5%"><col><col style="width:6%"><col style="width:17%"></colgroup>
       <thead><tr>
         <th>代码</th><th style="text-align:left">名称</th><th style="text-align:left">现价</th><th style="text-align:left">涨跌</th><th style="text-align:center">量化</th><th style="text-align:left">绑定策略</th>
         <th>持仓(股)</th><th style="text-align:right">操作</th>

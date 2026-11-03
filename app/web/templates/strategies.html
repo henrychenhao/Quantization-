@@ -1,23 +1,99 @@
 {% extends "base.html" %}
 {% block title %}策略池 · 量化终端{% endblock %}
 {% block content %}
+<style>
+/* ---------- 策略池页级视觉 ---------- */
+.pool-title{
+  font-size:26px; font-weight:800; letter-spacing:-.3px; line-height:1.25;
+  background:linear-gradient(118deg,#0F172A 32%,#2F6BFF 100%);
+  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+}
+.h-stat{
+  display:inline-flex; align-items:center; gap:7px; padding:8px 15px; border-radius:99px;
+  background:rgba(255,255,255,.72); border:1px solid var(--line);
+  font-size:12.5px; color:var(--text-2);
+  box-shadow:0 2px 10px -6px rgba(15,23,42,.14); backdrop-filter:blur(8px);
+  transition:transform .15s, box-shadow .15s;
+}
+.h-stat:hover{transform:translateY(-1px); box-shadow:0 6px 18px -8px rgba(15,23,42,.22)}
+.h-stat b{font-size:16px; font-weight:750; color:var(--text); font-family:var(--mono)}
+.h-stat .dot-c{width:6px;height:6px;border-radius:50%;flex:none}
+
+.card-head h2::before{
+  content:''; display:inline-block; width:4px; height:14px; border-radius:2px;
+  background:linear-gradient(180deg,var(--brand),var(--cyan)); margin-right:9px; vertical-align:-1.5px;
+}
+
+/* 表格：fixed 布局杜绝溢出，列宽按内容规划 */
+table.pool{table-layout:fixed}
+#t-built td,#t-custom td{padding:11px 10px; vertical-align:middle}
+#t-built tr,#t-custom tr{transition:background .15s}
+#t-built tr:hover,#t-custom tr:hover{background:#F5F8FF}
+.code-cell{font-family:var(--mono); font-size:12px; color:var(--text-3)}
+.name-cell b{font-size:13.5px}
+
+/* 原理列：至多两行截断，悬停 title 看全文 */
+.doc-cell{
+  color:var(--text-3); font-size:12.5px; line-height:1.55;
+  display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  overflow-wrap:anywhere;
+}
+
+/* 风格徽章（六色） */
+.cat{display:inline-flex; align-items:center; padding:3px 10px; border-radius:99px;
+  font-size:11.5px; font-weight:600; white-space:nowrap}
+.cat::before{content:''; width:5px; height:5px; border-radius:50%; background:currentColor; margin-right:6px; opacity:.85}
+.cat.trend{background:#EAF1FF;color:#1E53E0}
+.cat.mr{background:#F0EDFF;color:#6B4DFF}
+.cat.grid{background:#E6F7F4;color:#00907C}
+.cat.obos{background:#FFF6E6;color:#C47500}
+.cat.momentum{background:#FDECEC;color:#D03036}
+.cat.vol{background:#E9EDFF;color:#3E63DD}
+.cat.none{background:#F2F5FA;color:#8A93A6}
+
+/* 参数药丸：默认灰、已偏离默认蓝 */
+.pills{display:flex; flex-wrap:wrap; gap:5px}
+.pill{
+  display:inline-flex; align-items:center; padding:2.5px 9px; border-radius:8px;
+  font-family:var(--mono); font-size:11.5px; white-space:nowrap;
+  background:#F1F4F9; color:#69738C; font-weight:500;
+}
+.pill.changed{background:var(--brand-soft); color:var(--brand-dark); font-weight:650;
+  box-shadow:inset 0 0 0 1px rgba(47,107,255,.22)}
+
+/* 绑定徽章 */
+.bind-on{display:inline-flex;align-items:center;padding:3px 10px;border-radius:99px;
+  background:#E6F7F4;color:#00907C;font-size:11.5px;font-weight:600;white-space:nowrap}
+.bind-off{color:#B4BCCC;font-size:12px}
+
+/* 空态 */
+#custom-empty{padding:38px 20px; text-align:center; color:var(--text-3); font-size:13px}
+#custom-empty svg{width:38px;height:38px;opacity:.35;margin-bottom:10px}
+</style>
+
 <div class="page-head">
   <div>
-    <h1>策略池</h1>
+    <h1 class="pool-title">策略池</h1>
     <div class="sub">调参改的是策略本身（全局生效）· 另存副本可与原策略并存绑定不同标的 · 保存后信号 / 回测 / 推荐 / AI 即时同口径</div>
+  </div>
+  <div class="page-actions" style="display:flex;gap:10px;align-items:center">
+    <span class="h-stat"><span class="dot-c" style="background:var(--brand)"></span>内置 <b id="cnt-built">—</b></span>
+    <span class="h-stat"><span class="dot-c" style="background:#6B4DFF"></span>副本 <b id="cnt-custom">—</b></span>
+    <span class="h-stat"><span class="dot-c" style="background:var(--up)"></span>已调参 <b id="cnt-tuned">—</b></span>
   </div>
 </div>
 
 <div class="card">
   <div class="card-head">
     <h2>内置策略</h2>
-    <span class="hint">蓝色参数 = 已偏离默认值 · 调参 / 另存副本均在此行操作</span>
+    <span class="hint">蓝色药丸 = 已偏离默认值 · 调参 / 另存副本均在此行操作</span>
   </div>
   <div class="table-wrap">
-    <table>
+    <table class="pool">
+      <colgroup><col style="width:10%"><col style="width:8%"><col style="width:8%"><col><col style="width:22%"><col style="width:7%"><col style="width:10%"></colgroup>
       <thead><tr>
         <th style="text-align:left">名称</th><th style="text-align:left">代码</th><th style="text-align:left">风格</th>
-        <th style="text-align:left;min-width:300px">原理</th><th style="text-align:left;min-width:260px">参数（当前生效）</th>
+        <th style="text-align:left">原理</th><th style="text-align:left">参数（当前生效）</th>
         <th>绑定</th><th style="text-align:right">操作</th>
       </tr></thead>
       <tbody id="t-built"></tbody>
@@ -31,16 +107,19 @@
     <span class="hint">基于内置策略的调参变体 · 删除副本会同步解绑自选，历史信号保留</span>
   </div>
   <div class="table-wrap">
-    <table>
+    <table class="pool">
+      <colgroup><col style="width:14%"><col style="width:11%"><col style="width:11%"><col><col style="width:9%"><col style="width:13%"></colgroup>
       <thead><tr>
         <th style="text-align:left">名称</th><th style="text-align:left">代码</th><th style="text-align:left">基于</th>
-        <th style="text-align:left;min-width:260px">参数（当前生效）</th>
+        <th style="text-align:left">参数（当前生效）</th>
         <th>绑定</th><th style="text-align:right">操作</th>
       </tr></thead>
       <tbody id="t-custom"></tbody>
     </table>
-    <div id="custom-empty" style="display:none;padding:26px;text-align:center;color:var(--text-3);font-size:13px">
-      暂无自定义副本 · 在上方内置策略行点「另存副本」创建
+    <div id="custom-empty" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      <div>暂无自定义副本</div>
+      <div style="font-size:12px;margin-top:4px">在上方内置策略行点「另存副本」，基于当前参数创建变体</div>
     </div>
   </div>
 </div>
@@ -50,6 +129,9 @@
 <script>
 /* ---------- 策略池：内置调参 + 副本管理 ---------- */
 let ITEMS = [];
+
+const CAT_CLS = {"趋势": "trend", "均值回归": "mr", "网格震荡": "grid",
+                 "超买超卖": "obos", "动量": "momentum", "波动率": "vol"};
 
 async function load() {
   try {
@@ -61,37 +143,47 @@ async function load() {
 
 const byCode = c => ITEMS.find(s => s.code === c);
 
-function paramChips(s) {
-  return Object.entries(s.params).map(([k, v]) => {
+function paramPills(s) {
+  return `<span class="pills">` + Object.entries(s.params).map(([k, v]) => {
     const changed = s.defaults[k] !== v;
-    return `<span style="${changed ? "color:var(--brand);font-weight:650" : "color:var(--text-3)"}"
-      title="${changed ? "默认 " + s.defaults[k] : "默认值"}">${k}=${v}</span>`;
-  }).join('<span style="color:var(--line);margin:0 2px">·</span>');
+    return `<span class="pill${changed ? " changed" : ""}" title="${changed ? "默认 " + s.defaults[k] : "默认值"}">${k}=${v}</span>`;
+  }).join("") + `</span>`;
 }
+
+const catBadge = c => `<span class="cat ${CAT_CLS[c] || "none"}">${c}</span>`;
+const bindBadge = n => n ? `<span class="bind-on">${n} 自选</span>` : `<span class="bind-off">未绑定</span>`;
 
 function render() {
   const built = ITEMS.filter(s => !s.is_custom);
   const custom = ITEMS.filter(s => s.is_custom);
+  const tuned = ITEMS.filter(s => Object.entries(s.params)
+    .some(([k, v]) => s.defaults[k] !== v)).length;
+
+  document.getElementById("cnt-built").textContent = built.length;
+  document.getElementById("cnt-custom").textContent = custom.length;
+  document.getElementById("cnt-tuned").textContent = tuned;
+
   document.getElementById("t-built").innerHTML = built.map(s => `
     <tr>
-      <td><b>${s.name}</b></td>
-      <td style="font-family:var(--mono,monospace)">${s.code}</td>
-      <td>${s.category}</td>
-      <td style="color:var(--text-3);font-size:12.5px;max-width:340px">${s.doc}</td>
-      <td>${paramChips(s)}</td>
-      <td>${s.watchers ? s.watchers + " 个自选" : "—"}</td>
+      <td class="name-cell"><b>${s.name}</b></td>
+      <td class="code-cell">${s.code}</td>
+      <td>${catBadge(s.category)}</td>
+      <td><div class="doc-cell" title="${s.doc}">${s.doc}</div></td>
+      <td>${paramPills(s)}</td>
+      <td style="text-align:center">${bindBadge(s.watchers)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn sm" onclick="openParams('${s.code}')">调参</button>
         <button class="btn sm brand-ghost" onclick="openCopy('${s.code}')">另存副本</button>
       </td>
     </tr>`).join("");
+
   document.getElementById("t-custom").innerHTML = custom.map(s => `
     <tr>
-      <td><b>${s.name}</b></td>
-      <td style="font-family:var(--mono,monospace)">${s.code}</td>
-      <td>${(byCode(s.base) || {name: s.base}).name}</td>
-      <td>${paramChips(s)}</td>
-      <td>${s.watchers ? s.watchers + " 个自选" : "—"}</td>
+      <td class="name-cell"><b>${s.name}</b></td>
+      <td class="code-cell">${s.code}</td>
+      <td>${catBadge((byCode(s.base) || {category: "—"}).category)}</td>
+      <td>${paramPills(s)}</td>
+      <td style="text-align:center">${bindBadge(s.watchers)}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn sm" onclick="openParams('${s.code}')">调参</button>
         <button class="btn sm danger" onclick="openDel('${s.code}')">删除</button>
