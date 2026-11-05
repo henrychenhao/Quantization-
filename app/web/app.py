@@ -106,7 +106,7 @@ def page_account(request: Request):
     ]
     market_value = sum(p["market_value"] for p in positions)
     cash_now = account.cash()
-    init_cash = float(cfg.get("account", {}).get("initial_cash", 100000))
+    init_cash = db.get_initial_cash()     # 以账本为准（config 仅首次建库）
     total_now = cash_now + market_value
     pnl = total_now - init_cash
     snap_rows = [{"date": s["snap_date"], "cash": float(s["cash"]),
