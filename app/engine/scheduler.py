@@ -146,6 +146,12 @@ def job_data_sync(cfg: dict) -> None:
     if failed:
         print(f"[sync] 注意：{len(failed)} 只标的刷新失败，次日同步会重试")
     try:
+        from app.datasource.stock_dict import refresh as refresh_dict
+        n = refresh_dict()
+        print(f"[sync] 标的字典刷新 {n} 只")
+    except Exception as e:
+        print(f"[sync] 标的字典刷新失败（沿用旧文件）: {e}")
+    try:
         n = db.expire_stale_signals()
         print(f"[sync] 信号过期归档 {n} 条")
     except Exception as e:

@@ -5,6 +5,20 @@
   .wl-code{font-family:var(--mono);font-weight:600;font-size:12.5px}
   .wl-name{color:var(--text-2);font-size:12.5px}
   .tag-row{display:flex;flex-wrap:wrap;gap:5px}
+  /* 添加自选：全市场搜索候选下拉 */
+  .cands{
+    position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:60;
+    max-height:250px;overflow-y:auto;background:var(--card);
+    border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px -10px rgba(15,23,42,.25);
+  }
+  .cand{padding:8px 13px;cursor:pointer;font-size:12.5px;display:flex;
+    justify-content:space-between;align-items:center;gap:10px}
+  .cand:hover{background:#F4F8FF}
+  .cand .cand-side{display:flex;align-items:center;gap:7px;flex:none}
+  .cand .code{font-family:var(--mono);color:var(--text-3);font-size:12px}
+  .cand .tag{font-size:10px;padding:1px 7px;border-radius:99px}
+  .cand.muted{color:var(--text-3);cursor:default;justify-content:center}
+  .cand.muted:hover{background:none}
   .rec-reason{
     background:linear-gradient(90deg,#F0FAF6 0%,#F7FCFA 100%);
     border:1px solid #CBEADF;border-left:3px solid var(--cyan);
@@ -256,10 +270,16 @@ document.getElementById("add-btn").addEventListener("click", () => {
   openModal(`
     <div class="modal">
       <div class="modal-head">添加自选
-        <div class="sub">添加后即纳入量化监控范围</div>
+        <div class="sub">搜索全市场标的（A 股 + ETF），或直接手输代码</div>
       </div>
       <div class="modal-body">
-        <div class="field"><label>代码</label><input class="input" id="m-code" placeholder="如 513530"></div>
+        <div class="field"><label>搜索（名称 / 代码）</label>
+          <div style="position:relative">
+            <input class="input" id="m-search" placeholder="如 贵州茅台 / 600519 / 网格ETF" autocomplete="off">
+            <div class="cands" id="m-cands" style="display:none"></div>
+          </div>
+        </div>
+        <div class="field"><label>代码</label><input class="input" id="m-code" placeholder="搜索选中自动填，或手输"></div>
         <div class="field"><label>名称（可选）</label><input class="input" id="m-name" placeholder="如 港股通红利ETF"></div>
         <div class="field"><label>绑定策略</label><div class="chips" id="m-strategies">${chips}</div></div>
       </div>
@@ -276,6 +296,58 @@ document.getElementById("add-btn").addEventListener("click", () => {
           l.classList.toggle("checked", cb.checked);
         });
       });
+
+      /* ---- 全市场模糊搜索：防抖 200ms，点选候选自动填代码与名称 ---- */
+      const searchEl = document.getElementById("m-search");
+      const candsEl = document.getElementById("m-cands");
+      let timer = null;
+      const esc = s => (s || "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      const renderCands = (items, ready) => {
+        if (!items.length) {
+          candsEl.innerHTML = `<div class="cand muted">${ready ? "无匹配标的" : "标的字典加载中，可直接手输代码"}</div>`;
+        } else {
+          candsEl.innerHTML = items.map(c => `
+            <div class="cand" data-code="${c.code}" data-name="${esc(c.name)}">
+              <span>${esc(c.name)}</span>
+              <span class="cand-side"><i class="tag ${c.type === "etf" ? "blue" : ""}">${c.type === "etf" ? "ETF" : (c.market || "").toUpperCase()}</i> <span class="code">${c.code}</span></span>
+            </div>`).join("");
+        }
+        candsEl.style.display = "block";
+        candsEl.querySelectorAll(".cand[data-code]").forEach(el => {
+          el.addEventListener("mousedown", e => {     // mousedown 先于 blur 触发
+            e.preventDefault();
+            document.getElementById("m-code").value = el.dataset.code;
+            document.getElementById("m-name").value = el.dataset.name;
+            searchEl.value = el.dataset.name;
+            candsEl.style.display = "none";
+          });
+        });
+      };
+      searchEl.addEventListener("input", () => {
+        clearTimeout(timer);
+        const q = searchEl.value.trim();
+        if (!q) { candsEl.style.display = "none"; return; }
+        timer = setTimeout(async () => {
+          try {
+            const d = await api(`/api/stock_search?q=${encodeURIComponent(q)}`);
+            renderCands(d.items, d.ready);
+          } catch (e) { toast(e.message, "err"); }
+        }, 200);
+      });
+      searchEl.addEventListener("focus", () => {
+        if (searchEl.value.trim() && candsEl.innerHTML) candsEl.style.display = "block";
+      });
+      searchEl.addEventListener("keydown", e => {
+        if (e.key === "Enter" && candsEl.style.display === "block") {
+          const first = candsEl.querySelector(".cand[data-code]");
+          if (first) { e.preventDefault(); first.dispatchEvent(new MouseEvent("mousedown", { cancelable: true })); }
+        }
+      });
+      document.addEventListener("click", function hideCands(ev) {
+        if (!ev.target.closest("#m-cands") && ev.target !== searchEl) candsEl.style.display = "none";
+        if (!document.getElementById("m-search")) document.removeEventListener("click", hideCands);  // 弹窗关闭后自清理
+      });
+
       document.getElementById("m-code").focus();
       document.getElementById("m-submit").addEventListener("click", async () => {
         const code = document.getElementById("m-code").value.trim();

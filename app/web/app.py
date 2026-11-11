@@ -17,7 +17,7 @@ from app.account import core as account
 from app.backtest.engine import Fees, run_backtest
 from app.backtest.report import compute_metrics
 from app.config import load_config
-from app.datasource import industry_map, sector
+from app.datasource import industry_map, sector, stock_dict
 from app.datasource.akshare_source import AkShareSource
 from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch
@@ -40,6 +40,12 @@ db.init_db()
 db.seed_watchlist(cfg.get("watchlist", []))
 db.init_cash(cfg.get("account", {}).get("initial_cash", 100000))
 wecom.init(cfg.get("push", {}))
+
+
+@app.on_event("startup")
+def _warm_stock_dict():
+    """服务启动时后台预热全市场标的字典（缺失/过期时自动拉取，不阻塞启动）。"""
+    stock_dict.ensure_ready_async()
 
 def _strategy_meta() -> list[dict]:
     """页面用策略列表（动态：含调参副本与调参后参数），供回测/自选/信号页渲染。"""
@@ -153,6 +159,16 @@ def api_watchlist():
         "shares": pos.get(w["code"], {}).get("shares"),
     } for w in db.list_watchlist()]
     return {"items": items}
+
+
+@app.get("/api/stock_search")
+def api_stock_search(q: str, limit: int = 20):
+    """全市场标的模糊搜索（A 股 5500+ + 场内 ETF 1700+）：代码前缀 > 名称包含 > 代码包含。
+
+    ready=false 表示字典首次拉取中，前端提示可直接手输代码。
+    """
+    items, ready = stock_dict.search(q, max(1, min(limit, 50)))
+    return {"items": items, "ready": ready}
 
 
 @app.post("/api/watchlist")
