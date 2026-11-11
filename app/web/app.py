@@ -18,7 +18,7 @@ from app.backtest.engine import Fees, run_backtest
 from app.backtest.report import compute_metrics
 from app.config import load_config
 from app.datasource import industry_map, sector, stock_dict
-from app.datasource.akshare_source import AkShareSource
+from app.datasource.akshare_source import AkShareSource, INDEX_CODES
 from app.datasource.base import is_etf
 from app.datasource.kline_store import get_or_fetch
 from app.engine import signals as signal_engine
@@ -169,6 +169,31 @@ def api_stock_search(q: str, limit: int = 20):
     """
     items, ready = stock_dict.search(q, max(1, min(limit, 50)))
     return {"items": items, "ready": ready}
+
+
+@app.get("/api/market_overview")
+def api_market_overview():
+    """大盘总览：三大指数实时行情 + 近 90 日收盘走势（本地 K 线缓存，缺则首次拉取）。"""
+    source = AkShareSource()
+    kline_dir = cfg["data"]["kline_dir"]
+    spots = source.get_spots(list(INDEX_CODES))
+    items = []
+    for code, fallback_name in INDEX_CODES.items():
+        s = spots.get(code) or {}
+        kline: list[dict] = []
+        try:
+            df = get_or_fetch(code, source, kline_dir)
+            if df is not None and not df.empty:
+                for d, c in df.tail(90)["close"].items():
+                    kline.append({"date": d.strftime("%m-%d"), "close": round(float(c), 2)})
+        except Exception as e:
+            print(f"[market_overview] {code} 走势获取失败: {e}")
+        items.append({
+            "code": code, "name": s.get("name") or fallback_name,
+            "price": s.get("price"), "change_pct": s.get("change_pct"),
+            "kline": kline,
+        })
+    return {"items": items}
 
 
 @app.post("/api/watchlist")

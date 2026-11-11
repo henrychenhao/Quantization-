@@ -145,6 +145,12 @@ def job_data_sync(cfg: dict) -> None:
             print(f"[sync] {w['code']} 刷新失败: {e}")
     if failed:
         print(f"[sync] 注意：{len(failed)} 只标的刷新失败，次日同步会重试")
+    for idx in ("sh000001", "sz399001", "sz399006"):
+        try:
+            n = refresh(idx, source, cfg["data"]["kline_dir"])
+            print(f"[sync] 指数 {idx} K线刷新 {n} 根")
+        except Exception as e:
+            print(f"[sync] 指数 {idx} 刷新失败: {e}")
     try:
         from app.datasource.stock_dict import refresh as refresh_dict
         n = refresh_dict()

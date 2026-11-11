@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block title %}自选监控 · 量化终端{% endblock %}
 {% block content %}
+<script src="/static/echarts.min.js"></script>
 <style>
   .wl-code{font-family:var(--mono);font-weight:600;font-size:12.5px}
   .wl-name{color:var(--text-2);font-size:12.5px}
@@ -19,6 +20,20 @@
   .cand .tag{font-size:10px;padding:1px 7px;border-radius:99px}
   .cand.muted{color:var(--text-3);cursor:default;justify-content:center}
   .cand.muted:hover{background:none}
+  /* 大盘总览 */
+  .market-layout{display:grid;grid-template-columns:288px 1fr;gap:20px;align-items:stretch}
+  .idx-col{display:flex;flex-direction:column;gap:10px;justify-content:center}
+  .idx-block{
+    border:1px solid var(--line);border-radius:11px;padding:11px 14px;
+    background:linear-gradient(135deg,#FBFCFE 0%,#F5F8FF 100%);
+    transition:transform .15s, box-shadow .15s;
+  }
+  .idx-block:hover{transform:translateY(-1px);box-shadow:0 6px 16px -8px rgba(15,23,42,.18)}
+  .idx-name{font-size:12px;color:var(--text-3);display:flex;justify-content:space-between;align-items:center}
+  .idx-name .c{font-family:var(--mono);font-size:10.5px;opacity:.75}
+  .idx-price{font-family:var(--mono);font-size:19px;font-weight:700;margin-top:3px;letter-spacing:.2px}
+  .idx-chg{font-size:12px;font-weight:650;margin-top:1px}
+  @media (max-width:960px){.market-layout{grid-template-columns:1fr}.idx-col{flex-direction:row}.idx-block{flex:1}}
   .rec-reason{
     background:linear-gradient(90deg,#F0FAF6 0%,#F7FCFA 100%);
     border:1px solid #CBEADF;border-left:3px solid var(--cyan);
@@ -41,6 +56,19 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.5 13.5H11l-1 8.5L19.5 10.5H13L13 2z"/></svg>
       运行信号扫描
     </button>
+  </div>
+</div>
+
+<div class="card" id="market-card" style="margin-bottom:16px">
+  <div class="card-head">
+    <h2>大盘总览</h2>
+    <span class="hint">三大指数实时 · 近 90 日走势归一化对比（首日 = 1000 点基准）</span>
+  </div>
+  <div class="market-layout">
+    <div class="idx-col" id="idx-col">
+      <div class="idx-block" style="color:var(--text-3);text-align:center;font-size:12.5px">加载中…</div>
+    </div>
+    <div id="marketChart" style="height:232px;min-width:0"></div>
   </div>
 </div>
 
@@ -134,6 +162,65 @@ async function refreshQuotes() {
     }
   } catch (e) { /* 行情接口失败静默，保留旧值 */ }
 }
+
+/* ---- 大盘总览：三大指数实时 + 近 90 日归一化走势 ---- */
+let marketChart = null;
+const IDX_COLORS = ["#2F6BFF", "#6B4DFF", "#00B39B"];
+
+async function loadMarket() {
+  try {
+    const d = await api("/api/market_overview");
+    const items = d.items;
+    if (!items.length) return;
+
+    document.getElementById("idx-col").innerHTML = items.map(i => {
+      const up = (i.change_pct ?? 0) >= 0;
+      return `<div class="idx-block">
+        <div class="idx-name"><span>${i.name}</span><span class="c">${(i.code || "").slice(-6)}</span></div>
+        <div class="idx-price ${up ? "pos" : "neg"}">${i.price ? i.price.toFixed(2) : "—"}</div>
+        <div class="idx-chg ${up ? "pos" : "neg"}">${up ? "▲ +" : "▼ "}${(i.change_pct ?? 0).toFixed(2)}%</div>
+      </div>`;
+    }).join("");
+
+    const hasK = items.some(i => i.kline.length);
+    if (!hasK) return;
+    const dates = items[0].kline.map(x => x.date);
+    marketChart = marketChart || echarts.init(document.getElementById("marketChart"));
+    marketChart.setOption({
+      grid: { left: 48, right: 12, top: 30, bottom: 26 },
+      legend: { top: 0, right: 0, icon: "roundRect", itemWidth: 9, itemHeight: 5,
+                textStyle: { fontSize: 11, color: "#8A93A6" } },
+      tooltip: {
+        trigger: "axis", backgroundColor: "#0B1220", borderWidth: 0,
+        textStyle: { color: "#E8EDF6", fontSize: 12 },
+        formatter: ps => ps.map(p =>
+          `${p.marker}${p.seriesName}　<b style="font-family:var(--mono)">${
+            items[p.seriesIndex].kline[p.dataIndex]?.close ?? "—"}</b>`
+        ).join("<br>") + `<div style="margin-top:4px;color:#93A0B5;font-size:10.5px">${ps[0].axisValue}</div>`,
+      },
+      xAxis: { type: "category", data: dates, boundaryGap: false,
+               axisLine: { lineStyle: { color: "#D5DCE8" } },
+               axisLabel: { color: "#8A93A6", fontSize: 10.5 } },
+      yAxis: { type: "value", scale: true,
+               axisLabel: { color: "#8A93A6", fontSize: 10.5 },
+               splitLine: { lineStyle: { color: "#EEF1F7" } } },
+      series: items.map((it, idx) => {
+        const raw = it.kline.map(x => x.close);
+        const base = raw[0] || 1;
+        return {
+          name: it.name, type: "line", smooth: true, symbol: "none",
+          data: raw.map(v => +(v / base * 1000).toFixed(2)),
+          lineStyle: { width: 2, color: IDX_COLORS[idx] },
+          itemStyle: { color: IDX_COLORS[idx] },
+          areaStyle: idx === 0 ? { opacity: .07, color: IDX_COLORS[idx] } : undefined,
+        };
+      }),
+    });
+  } catch (e) { document.getElementById("idx-col").innerHTML =
+    `<div class="idx-block" style="color:var(--text-3);text-align:center;font-size:12.5px">大盘数据获取失败</div>`; }
+}
+loadMarket();
+setInterval(loadMarket, 60000);
 
 setInterval(refreshQuotes, 15000);
 
