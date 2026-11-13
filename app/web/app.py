@@ -75,6 +75,49 @@ def _last_prices(codes: list[str]) -> dict[str, float]:
     return out
 
 
+def _live_quotes(codes: list[str]) -> dict[str, dict]:
+    """实时行情 {code: {price, prev_close, change_pct}}；单只失败回退本地 K 线收盘与昨收。"""
+    out = {}
+    try:
+        spots = AkShareSource().get_spots(codes)
+    except Exception:
+        spots = {}
+    for c in codes:
+        s = spots.get(c)
+        if s and s.get("price"):
+            out[c] = s
+            continue
+        try:
+            df = get_or_fetch(c, AkShareSource(), cfg["data"]["kline_dir"])
+            if df is not None and not df.empty:
+                prev = float(df["close"].iloc[-2]) if len(df) >= 2 else float(df["close"].iloc[-1])
+                last = float(df["close"].iloc[-1])
+                out[c] = {"price": last, "prev_close": prev,
+                          "change_pct": (last / prev - 1) * 100 if prev else 0.0}
+        except Exception:
+            pass
+    return out
+
+
+def _position_advice(pnl_pct: float, day_pct: float | None, has_signal: bool) -> dict:
+    """持仓操作建议（规则化）：信号 > 深亏 > 回撤 > 浮盈 > 当日异动 > 持有。"""
+    if has_signal:
+        return {"level": "signal", "text": "今日待处理信号 · 前往信号中心"}
+    if pnl_pct <= -25:
+        return {"level": "danger", "text": "浮亏超 25% · 评估止损或补仓摊薄"}
+    if pnl_pct <= -15:
+        return {"level": "warn", "text": "浮亏较重 · 关注支撑位"}
+    if pnl_pct >= 5:
+        return {"level": "profit", "text": "已有浮盈 · 可分批止盈"}
+    if day_pct is not None and day_pct >= 5:
+        return {"level": "warn", "text": f"当日大涨 {day_pct:.0f}% · 警惕冲高回落"}
+    if day_pct is not None and day_pct <= -5:
+        return {"level": "warn", "text": f"当日大跌 {day_pct:.0f}% · 注意趋势"}
+    if pnl_pct <= -5:
+        return {"level": "hold", "text": "小幅浮亏 · 持有观察"}
+    return {"level": "hold", "text": "持有 · 等待策略信号"}
+
+
 # ---------- 页面 ----------
 
 @app.get("/")
@@ -103,14 +146,35 @@ def page_signals(request: Request):
 
 @app.get("/account")
 def page_account(request: Request):
+    from datetime import datetime
+
     pos = account.positions()
-    prices = _last_prices(list(pos.keys()))
-    positions = [
-        {"code": c, "name": _name_of(c), "shares": p["shares"], "avg_cost": p["avg_cost"],
-         "last_price": prices.get(c, 0), "market_value": prices.get(c, 0) * p["shares"]}
-        for c, p in pos.items()
-    ]
-    market_value = sum(p["market_value"] for p in positions)
+    codes = list(pos.keys())
+    live = _live_quotes(codes)
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_pending = {s["code"] for s in db.list_signals("pending")
+                     if (s["created_at"] or "")[:10] == today}
+
+    positions, market_value, day_pnl_total = [], 0.0, 0.0
+    for c, p in pos.items():
+        q = live.get(c) or {}
+        last = q.get("price") or 0.0
+        prev = q.get("prev_close") or 0.0
+        day_pct = q.get("change_pct")
+        if day_pct is None and prev:
+            day_pct = (last / prev - 1) * 100 if prev else 0.0
+        mv = last * p["shares"]
+        day_pnl = (last - prev) * p["shares"] if last and prev else 0.0
+        pnl_pct = (last / p["avg_cost"] - 1) * 100 if p["avg_cost"] else 0.0
+        positions.append({
+            "code": c, "name": _name_of(c), "shares": p["shares"],
+            "avg_cost": p["avg_cost"], "last_price": last, "prev_close": prev,
+            "day_pct": day_pct, "day_pnl": day_pnl, "pnl_pct": pnl_pct,
+            "market_value": mv, "advice": _position_advice(pnl_pct, day_pct, c in today_pending),
+        })
+        market_value += mv
+        day_pnl_total += day_pnl
+
     cash_now = account.cash()
     init_cash = db.get_initial_cash()     # 以账本为准（config 仅首次建库）
     total_now = cash_now + market_value
@@ -122,6 +186,7 @@ def page_account(request: Request):
         "active": "account", "cash": cash_now, "market_value": market_value,
         "total": total_now, "init_cash": init_cash, "pnl": pnl,
         "pnl_pct": (pnl / init_cash) if init_cash else 0,
+        "day_pnl_total": day_pnl_total,
         "positions": positions,
         "trades": db.list_trades(), "snapshots": snap_rows,
     })
